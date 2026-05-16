@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Juego</title>
+</head>
+<body>
+
+<h1>Sala {{ room_id }}</h1>
+
+<p>Jugador: {{ player }}</p>
+
+<h2>Jugadores:</h2>
+
+<ul>
+    {% for p in players %}
+        <li>{{ p }}</li>
+    {% endfor %}
+</ul>
+
+<canvas
+    id="canvas"
+    width="500"
+    height="300"
+    style="border:1px solid black"
+></canvas>
+
+<h2>Respuesta / Chat</h2>
+
+<input id="messageInput" type="text" placeholder="Escribe tu respuesta">
+<button onclick="sendGuess()">Enviar</button>
+
+<script>
+    const ROOM_ID = "{{ room_id }}";
+</script>
+
+<script src="{{ url_for('static', filename='game.js') }}"></script>
+
+</body>
+</html>

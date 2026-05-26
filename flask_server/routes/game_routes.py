@@ -2,7 +2,7 @@ from flask import Blueprint, session, render_template, request, jsonify
 from routes.lobby_routes import rooms
 from services.udp_client import send_draw_event
 from services.tcp_client import send_chat_message
-from db_client import DBClient
+from services.db_client import DBClient
 
 game_bp = Blueprint("game", __name__)
 
@@ -19,15 +19,15 @@ def game(room_id):
 
 @game_bp.route("/draw", methods=["POST"])
 def draw():
-    # Para dibujar no necesitamos guardar en BD, solo emitir por UDP
     data = request.get_json()
 
     room_id = data.get("room_id")
-    x = data.get("x")
-    y = data.get("y")
+    x = data.get("endX")
+    y = data.get("endY")
     color = data.get("color", "black")
 
     send_draw_event(room_id, x, y, color)
+
     print(f"[FLASK -> UDP] room={room_id}, x={x}, y={y}, color={color}")
 
     return jsonify({
@@ -44,6 +44,9 @@ def guess():
     player = session.get("player_name", "anonymous")
 
     # --- INTEGRACIÓN CON BD ---
+
+    '''
+    
     try:
         # my_port=0 evita colisiones de puertos en Flask
         db = DBClient(my_port=0) 
@@ -58,6 +61,9 @@ def guess():
         )
     except Exception as e:
         print(f"[ERROR DB] No se pudo guardar el guess: {e}")
+
+    
+    '''
 
     send_chat_message(room_id, player, message)
     print(f"[FLASK -> TCP] room={room_id}, player={player}, message={message}")

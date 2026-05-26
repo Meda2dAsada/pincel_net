@@ -1,5 +1,5 @@
 from flask import Blueprint, request, session, redirect, url_for, render_template
-from db_client import DBClient
+from services.db_client import DBClient
 
 lobby_bp = Blueprint("lobby", __name__)
 
@@ -22,6 +22,7 @@ def lobby():
         rooms[room_id].append(player_name)
 
         # --- INTEGRACIÓN CON BD ---
+        '''
         try:
             db = DBClient(my_port=0)
 
@@ -37,6 +38,7 @@ def lobby():
         except Exception as e:
             print(f"[ERROR DB] No se pudo guardar info de lobby: {e}")
 
+        '''
         return redirect(url_for("game.game", room_id=room_id))
 
     return render_template("lobby.html")

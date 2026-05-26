@@ -1,7 +1,6 @@
 // gcc servidor.c -o servidor -lcrypto
-// para compilar este archivo necesita tener instalado 
-// el paquete de desarrollo de OpenSSL 
-// (en Ubuntu/Debian es sudo apt install libssl-dev).
+// Necesita el paquete de desarrollo de OpenSSL
+// (en Ubuntu/Debian: sudo apt install libssl-dev).
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,15 +17,24 @@
 #define BUFFER_SIZE 2048
 #define APP_KEY "Another day in paradise"
 
-// Función auxiliar básica para extraer valores de un JSON plano sin usar librerías externas
+// Extrae valores de un JSON plano. Tolera espacio opcional tras los dos puntos.
 void extract_json_value(const char *json, const char *key, char *output) {
     char search_key[64];
-    snprintf(search_key, sizeof(search_key), "\"%s\": \"", key);
+    char *start = NULL;
 
-    char *start = strstr(json, search_key);
+    // Intento 1: "clave": " (con espacio)
+    snprintf(search_key, sizeof(search_key), "\"%s\": \"", key);
+    start = strstr(json, search_key);
+
+    // Intento 2: "clave":" (sin espacio)
+    if (!start) {
+        snprintf(search_key, sizeof(search_key), "\"%s\":\"", key);
+        start = strstr(json, search_key);
+    }
+
     if (start) {
-        start += strlen(search_key); 
-        char *end = strchr(start, '\"'); 
+        start += strlen(search_key);
+        char *end = strchr(start, '\"');
         if (end) {
             int length = end - start;
             strncpy(output, start, length);
@@ -34,28 +42,28 @@ void extract_json_value(const char *json, const char *key, char *output) {
             return;
         }
     }
-    output[0] = '\0'; 
+    output[0] = '\0';
 }
 
-// Función auxiliar para decodificar Base64 usando OpenSSL
-int base64_decode(const char* input, unsigned char* output) {
+// Decodifica Base64 usando OpenSSL. Retorna la longitud decodificada o -1 en error.
+int base64_decode(const char *input, unsigned char *output) {
     BIO *bio, *b64;
-    int decodeLen = strlen(input);
-    
+    int input_len = strlen(input);
+
     b64 = BIO_new(BIO_f_base64());
-    bio = BIO_new_mem_buf(input, decodeLen);
+    bio = BIO_new_mem_buf(input, input_len);
     bio = BIO_push(b64, bio);
-    
-    // Ignorar saltos de línea para procesar el JSON correctamente
-    BIO_set_flags(bio, BIO_FLAGS_BASE64_NO_NL); 
-    
-    int len = BIO_read(bio, output, decodeLen);
+
+    // IMPORTANTE: la bandera debe ponerse ANTES de leer.
+    BIO_set_flags(bio, BIO_FLAGS_BASE64_NO_NL);
+
+    int len = BIO_read(bio, output, input_len);
     BIO_free_all(bio);
-    return len; // Retorna la longitud de los bytes encriptados reales
+    return len;
 }
 
-// Inicializar llaves (SHA256 y MD5) y desencriptar AES-128-CBC
-int decrypt_db_field(const char* b64_input, char* plaintext_output) {
+// Deriva llave/IV de la APP_KEY y desencripta AES-128-CBC.
+int decrypt_db_field(const char *b64_input, char *plaintext_output) {
     if (!b64_input || strlen(b64_input) == 0) {
         plaintext_output[0] = '\0';
         return -1;
@@ -65,39 +73,50 @@ int decrypt_db_field(const char* b64_input, char* plaintext_output) {
     unsigned char key[16];
     unsigned char iv[16];
     unsigned char sha256_res[SHA256_DIGEST_LENGTH];
-    
-    // Clave: Primeros 16 bytes del SHA256
-    SHA256((unsigned char*)APP_KEY, strlen(APP_KEY), sha256_res);
+
+    // Clave: primeros 16 bytes del SHA-256 de la APP_KEY
+    SHA256((unsigned char *)APP_KEY, strlen(APP_KEY), sha256_res);
     memcpy(key, sha256_res, 16);
-    
-    // IV: Los 16 bytes del MD5
-    MD5((unsigned char*)APP_KEY, strlen(APP_KEY), iv);
+
+    // IV: los 16 bytes del MD5 de la APP_KEY
+    MD5((unsigned char *)APP_KEY, strlen(APP_KEY), iv);
 
     // 2. Decodificar Base64
     unsigned char ciphertext[1024];
     int ciphertext_len = base64_decode(b64_input, ciphertext);
     if (ciphertext_len <= 0) return -1;
 
-    // 3. Configurar OpenSSL para la desencriptación AES-128-CBC
+    // 3. Desencriptar AES-128-CBC
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) return -1;
+
+    // Buffer de salida separado, con margen para un bloque extra.
+    unsigned char plaintext[1024 + EVP_MAX_BLOCK_LENGTH];
     int len = 0;
     int plaintext_len = 0;
 
-    EVP_DecryptInit_ex(ctx, EVP_aes_128_cbc(), NULL, key, iv);
-    EVP_DecryptUpdate(ctx, ciphertext, &len, ciphertext, ciphertext_len);
+    if (EVP_DecryptInit_ex(ctx, EVP_aes_128_cbc(), NULL, key, iv) != 1) {
+        EVP_CIPHER_CTX_free(ctx);
+        return -1;
+    }
+
+    if (EVP_DecryptUpdate(ctx, plaintext, &len, ciphertext, ciphertext_len) != 1) {
+        EVP_CIPHER_CTX_free(ctx);
+        return -1;
+    }
     plaintext_len = len;
 
     // EVP_DecryptFinal_ex remueve el relleno PKCS7
-    if (EVP_DecryptFinal_ex(ctx, ciphertext + len, &len) <= 0) {
+    if (EVP_DecryptFinal_ex(ctx, plaintext + len, &len) != 1) {
         EVP_CIPHER_CTX_free(ctx);
-        return -1; // Retorna error si no estaba cifrado o la clave está mal
+        return -1; // No estaba cifrado o la clave/IV no coinciden
     }
     plaintext_len += len;
     EVP_CIPHER_CTX_free(ctx);
 
-    // 4. Añadir terminación nula para string en C
-    memcpy(plaintext_output, ciphertext, plaintext_len);
-    plaintext_output[plaintext_len] = '\0'; 
+    // 4. Terminación nula para string en C
+    memcpy(plaintext_output, plaintext, plaintext_len);
+    plaintext_output[plaintext_len] = '\0';
 
     return plaintext_len;
 }
@@ -141,18 +160,17 @@ int main() {
 
         int read_size = recv(client_fd, buffer, BUFFER_SIZE - 1, 0);
         if (read_size > 0) {
-            buffer[read_size] = '\0'; 
+            buffer[read_size] = '\0';
 
-            char type[32], raw_room_id[32], raw_player[64], raw_message[512];
-            char dec_room_id[32], dec_player[64], dec_message[512];
+            char type[32], raw_room_id[64], raw_player[128], raw_message[1024];
+            char dec_room_id[64], dec_player[128], dec_message[1024];
 
-            // Extraer strings crudos del JSON
             extract_json_value(buffer, "type", type);
             extract_json_value(buffer, "room_id", raw_room_id);
             extract_json_value(buffer, "player", raw_player);
             extract_json_value(buffer, "message", raw_message);
 
-            // Intentar desencriptar. Si falla (< 0), se asume texto plano y se copia el original.
+            // Si la desencriptación falla (< 0), se asume texto plano.
             if (decrypt_db_field(raw_room_id, dec_room_id) < 0) {
                 strcpy(dec_room_id, raw_room_id);
             }
@@ -163,7 +181,6 @@ int main() {
                 strcpy(dec_message, raw_message);
             }
 
-            // Mostrar el mensaje procesado
             if (strcmp(type, "MESSAGE") == 0) {
                 printf("[Sala %s] %s: %s\n", dec_room_id, dec_player, dec_message);
             } else {

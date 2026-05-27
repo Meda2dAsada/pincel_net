@@ -23,6 +23,13 @@ const char* word_bank[] = {
 };
 #define WORD_BANK_SIZE 10
 
+#define MAX_PLAYERS 10
+
+typedef struct {
+    char username[128];
+    int score;
+} PlayerScore;
+
 // Estructura expandida para controlar el estado de juego por sala
 typedef struct {
     char room_id[64];
@@ -31,10 +38,13 @@ typedef struct {
     char status[32]; // "waiting", "playing", "round_finished"
     int word_length;
     int is_guessed;
-    // NUEVO: Sincronización de chat
+    // Sincronización de chat
     char last_sender[128];
     char last_message[512];
     int msg_id;
+    // Sistema de puntajes
+    PlayerScore players[MAX_PLAYERS];
+    int player_count;
 } GameRoom;
 
 GameRoom rooms[MAX_ROOMS];
@@ -54,10 +64,10 @@ GameRoom* get_or_create_room(const char* room_id) {
         rooms[room_count].current_drawer[0] = '\0';
         rooms[room_count].word_length = 0;
         rooms[room_count].is_guessed = 0;
-        // Agrega estas 3 líneas:
         rooms[room_count].last_sender[0] = '\0';
         rooms[room_count].last_message[0] = '\0';
         rooms[room_count].msg_id = 0;
+        rooms[room_count].player_count = 0; // INICIALIZAMOS EL CONTADOR DE JUGADORES
         return &rooms[room_count++];
     }
     return NULL;
@@ -86,6 +96,22 @@ void extract_json_value(const char *json, const char *key, char *output) {
         }
     }
     output[0] = '\0';
+}
+
+// Función para sumar puntos (o registrar jugador nuevo)
+void add_points(GameRoom* room, const char* username, int points) {
+    for (int i = 0; i < room->player_count; i++) {
+        if (strcmp(room->players[i].username, username) == 0) {
+            room->players[i].score += points;
+            return;
+        }
+    }
+    // Si no existe en la lista, lo creamos
+    if (room->player_count < MAX_PLAYERS) {
+        strcpy(room->players[room->player_count].username, username);
+        room->players[room->player_count].score = points;
+        room->player_count++;
+    }
 }
 
 int main() {
@@ -132,13 +158,16 @@ int main() {
             extract_json_value(buffer, "room_id", room_id);
 
             GameRoom *room = get_or_create_room(room_id);
-            char response[1024] = {0};
+
+            // AMPLIAMOS el response a 2048 para que quepa el JSON de los scores
+            char response[2048] = {0};
 
             if (room != NULL) {
                 // ─── ACCIÓN: INICIAR RONDA / SELECCIONAR PALABRA RANDOM ───
                 if (strcmp(type, "START_ROUND") == 0) {
                     char player[128];
                     extract_json_value(buffer, "player", player);
+                    add_points(room, player, 0); // Registramos al que inicia la ronda
 
                     // Elegir palabra aleatoria del banco
                     int idx = rand() % WORD_BANK_SIZE;
@@ -162,6 +191,9 @@ int main() {
                     extract_json_value(buffer, "player", player);
                     extract_json_value(buffer, "message", message);
 
+                    // Registramos su presencia en el marcador por si acaba de unirse
+                    add_points(room, player, 0);
+
                     // Guardamos el mensaje en la memoria de la sala para sincronizar a otros
                     strcpy(room->last_sender, player);
                     strcpy(room->last_message, message);
@@ -176,6 +208,10 @@ int main() {
                     else if (strcmp(room->status, "playing") == 0 && strcasecmp(room->current_word, message) == 0) {
                         room->is_guessed = 1;
                         strcpy(room->status, "round_finished");
+
+                        // ¡PREMIO! Sumamos 10 puntos al jugador
+                        add_points(room, player, 10);
+
                         printf("⭐ [Sala %s] ¡%s ADIVINÓ LA PALABRA (%s)! ⭐\n", room->room_id, player, room->current_word);
 
                         snprintf(response, sizeof(response),
@@ -190,12 +226,25 @@ int main() {
                     send(client_fd, response, strlen(response), 0);
                 }
 
-                // ─── GETTER: CONSULTAR ESTADO DE LA SALA ───
+                // ─── GETTER: CONSULTAR ESTADO DE LA SALA Y PUNTAJES ───
                 else if (strcmp(type, "GET_STATE") == 0) {
+                    // 1. Armamos el arreglo JSON de puntos a mano
+                    char scores_json[1024] = "[";
+                    for(int i = 0; i < room->player_count; i++) {
+                        char temp[256];
+                        snprintf(temp, sizeof(temp), "{\"name\":\"%s\",\"score\":%d}%s",
+                            room->players[i].username, room->players[i].score,
+                            (i < room->player_count - 1) ? "," : "");
+                        strcat(scores_json, temp);
+                    }
+                    strcat(scores_json, "]");
+
+                    // 2. Inyectamos el JSON de puntos en la respuesta final
                     snprintf(response, sizeof(response),
-                        "{\"game_status\": \"%s\", \"drawer\": \"%s\", \"current_word\": \"%s\", \"word_length\": %d, \"is_guessed\": %d, \"last_sender\": \"%s\", \"last_message\": \"%s\", \"msg_id\": %d}",
+                        "{\"game_status\": \"%s\", \"drawer\": \"%s\", \"current_word\": \"%s\", \"word_length\": %d, \"is_guessed\": %d, \"last_sender\": \"%s\", \"last_message\": \"%s\", \"msg_id\": %d, \"scores\": %s}",
                         room->status, room->current_drawer, room->current_word, room->word_length, room->is_guessed,
-                        room->last_sender, room->last_message, room->msg_id);
+                        room->last_sender, room->last_message, room->msg_id, scores_json);
+
                     send(client_fd, response, strlen(response), 0);
                 }
             }

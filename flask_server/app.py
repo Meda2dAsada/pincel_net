@@ -12,10 +12,7 @@ app.register_blueprint(game_bp)
 
 @app.route("/")
 def home():
-    try:
-        return redirect(url_for('lobby_bp.lobby'))
-    except:
-        return redirect("/lobby")
+    return redirect(url_for("lobby.lobby"))
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True, threaded=True)

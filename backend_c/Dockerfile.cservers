@@ -1,0 +1,25 @@
+FROM ubuntu:22.04
+
+RUN apt-get update && apt-get install -y \
+    gcc \
+    libcjson-dev \
+    make \
+    net-tools \
+    iputils-ping \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY tcp_server/TCPServer.c /app/TCPServer.c
+COPY tcp_server/server_tcp.json /app/server_tcp.json
+COPY udp_server/UDPserver.c /app/UDPserver.c
+
+RUN gcc TCPServer.c -o server -lcjson -lpthread
+RUN gcc UDPserver.c -o udp_server
+
+EXPOSE 15000/tcp
+EXPOSE 5001/udp
+EXPOSE 5002/udp
+
+CMD ["bash"]

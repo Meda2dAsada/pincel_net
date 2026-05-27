@@ -1,4 +1,5 @@
 // static/game.js
+
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 
@@ -23,32 +24,53 @@ canvas.addEventListener("mousedown", (e) => {
     [lastX, lastY] = getMousePos(e);
 });
 
-// Configuración de renderizado del pincel para trazos orgánicos
+// Configuración del pincel
 ctx.lineJoin = "round";
 ctx.lineCap = "round";
 
-// Actualizar indicador numérico de grosor en tiempo real
+// Actualizar indicador numérico de grosor
 brushSize.addEventListener("input", (e) => {
     brushSizeVal.textContent = e.target.value;
 });
 
-// Obtener coordenadas exactas relativas al lienzo escalar
+// Obtener coordenadas relativas al canvas
 function getMousePos(e) {
     const rect = canvas.getBoundingClientRect();
+
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+
     return [
-        Math.floor(e.clientX - rect.left),
-        Math.floor(e.clientY - rect.top)
+        Math.floor((e.clientX - rect.left) * scaleX),
+        Math.floor((e.clientY - rect.top) * scaleY)
     ];
 }
 
-// Eventos de Mouse
+// Dibujar línea local o remota
+function drawLine(startX, startY, endX, endY, color, size) {
+    ctx.beginPath();
+    ctx.moveTo(startX, startY);
+    ctx.lineTo(endX, endY);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = size;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.stroke();
+}
+
+// Eventos de mouse
 canvas.addEventListener("mousedown", (e) => {
     drawing = true;
     [lastX, lastY] = getMousePos(e);
 });
 
-canvas.addEventListener("mouseup", () => drawing = false);
-canvas.addEventListener("mouseout", () => drawing = false);
+canvas.addEventListener("mouseup", () => {
+    drawing = false;
+});
+
+canvas.addEventListener("mouseout", () => {
+    drawing = false;
+});
 
 canvas.addEventListener("mousemove", (e) => {
     if (!drawing) return;
@@ -57,20 +79,18 @@ canvas.addEventListener("mousemove", (e) => {
     const color = colorPicker.value;
     const size = brushSize.value;
 
-    // Dibujo Local Inmediato
-    ctx.beginPath();
-    ctx.moveTo(lastX, lastY);
-    ctx.lineTo(currentX, currentY);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = size;
-    ctx.stroke();
+    // 1. Dibujar localmente para que el pintor no tenga latencia
+    drawLine(lastX, lastY, currentX, currentY, color, size);
 
-    // Enviar a Flask
+    // 2. Enviar trazo a Flask
     fetch("/draw", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+            "Content-Type": "application/json" 
+        },
         body: JSON.stringify({
             room_id: ROOM_ID,
+            player: PLAYER_NAME,
             startX: lastX,
             startY: lastY,
             endX: currentX,
@@ -78,14 +98,29 @@ canvas.addEventListener("mousemove", (e) => {
             color: color,
             size: size
         })
+    }).catch((error) => {
+        console.log("Error enviando dibujo:", error);
     });
 
     [lastX, lastY] = [currentX, currentY];
 });
 
-// Limpieza del lienzo
+// Borrar canvas local
 clearBtn.addEventListener("click", () => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    fetch("/clear", {
+        method: "POST",
+        headers: { 
+            "Content-Type": "application/json" 
+        },
+        body: JSON.stringify({
+            room_id: ROOM_ID,
+            player: PLAYER_NAME
+        })
+    }).catch((error) => {
+        console.log("Error enviando clear:", error);
+    });
 });
 
 // Envío de Mensajes / Intentos de palabra
@@ -147,16 +182,51 @@ function handleKeyPress(e) {
     }
 }
 
-// Insertar globos de chat dinámicos
+// Insertar mensajes en el chat
 function appendMessage(user, msg) {
     const chatBox = document.getElementById("chatBox");
     const msgElement = document.createElement("div");
+
     msgElement.className = "chat-bubble";
     msgElement.innerHTML = `<strong style="color: var(--accent-color);">${user}:</strong> ${msg}`;
-    
+
     chatBox.appendChild(msgElement);
     chatBox.scrollTop = chatBox.scrollHeight;
 }
+
+// Escuchar eventos en vivo desde Flask
+const eventSource = new EventSource(`/events/${ROOM_ID}`);
+
+eventSource.onmessage = function(event) {
+    const data = JSON.parse(event.data);
+
+    if (data.type === "UPDATE_CANVAS") {
+        // Evita que el jugador que dibuja redibuje su propio trazo
+        if (data.player === PLAYER_NAME) return;
+
+        drawLine(
+            data.startX,
+            data.startY,
+            data.endX,
+            data.endY,
+            data.color,
+            data.size
+        );
+    }
+
+    if (data.type === "CLEAR_CANVAS") {
+        // Evita procesar dos veces si el mismo jugador ya limpió localmente
+        if (data.player === PLAYER_NAME) return;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    if (data.type === "CHAT_MESSAGE") {
+        if (data.player === PLAYER_NAME) return;
+
+        appendMessage(data.player, data.message);
+    }
+};
 
 // ──────────────────────────────────────────────
 // LÓGICA DEL JUEGO CONECTADA AL SERVIDOR C

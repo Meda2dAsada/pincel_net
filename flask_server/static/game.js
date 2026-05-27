@@ -223,6 +223,42 @@ setInterval(async () => {
                 }
             }
         }
+// REGLA 4: RENDERIZAR LA TABLA DE PUNTOS
+        if (state.scores) {
+            const playersContainer = document.getElementById("playersContainer");
+            if (playersContainer) {
+                playersContainer.innerHTML = ""; // Limpiamos la lista anterior
+                
+                // Ordenar a los jugadores de mayor a menor puntuación
+                state.scores.sort((a, b) => b.score - a.score);
+
+                state.scores.forEach(p => {
+                    const div = document.createElement("div");
+                    // Diseño del bloque del jugador
+                    div.style.display = "flex";
+                    div.style.justifyContent = "space-between";
+                    div.style.alignItems = "center";
+                    div.style.padding = "10px";
+                    div.style.background = "#2a2c41";
+                    div.style.marginBottom = "8px";
+                    div.style.borderRadius = "6px";
+                    
+                    // Si el jugador soy yo, le pongo un borde brilloso
+                    if(p.name === PLAYER_NAME) {
+                        div.style.border = "1px solid #00ffcc";
+                    }
+
+                    div.innerHTML = `
+                        <span style="font-weight: bold; color: var(--accent-color);">${p.name}</span>
+                        <span style="background: #d11a7e; color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.85rem; font-weight: bold;">
+                            ${p.score} pts
+                        </span>
+                    `;
+                    playersContainer.appendChild(div);
+                });
+            }
+        }
+
     } catch (error) {
         // Silenciado para evitar spam en consola si Flask se retrasa
     }

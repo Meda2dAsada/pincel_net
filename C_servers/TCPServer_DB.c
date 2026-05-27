@@ -1,37 +1,80 @@
-// gcc servidor.c -o servidor -lcrypto
-// Necesita el paquete de desarrollo de OpenSSL
-// (en Ubuntu/Debian: sudo apt install libssl-dev).
-
+// Compilar con: gcc TCPServer.c -o tcp.exe -lcrypto
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
+#include <time.h>
 #include <arpa/inet.h>
 #include <openssl/evp.h>
 #include <openssl/sha.h>
-#include <openssl/md5.h>
 #include <openssl/bio.h>
 #include <openssl/buffer.h>
 
 #define PORT 15000
 #define BUFFER_SIZE 2048
+#define MAX_ROOMS 100
 #define APP_KEY "Another day in paradise"
 
-// Extrae valores de un JSON plano. Tolera espacio opcional tras los dos puntos.
+// Banco de palabras estático del servidor
+const char* word_bank[] = {
+    "perro", "gato", "computadora", "servidor", "pincel",
+    "canvas", "manzana", "guitarra", "codigo", "internet"
+};
+#define WORD_BANK_SIZE 10
+
+// Estructura expandida para controlar el estado de juego por sala
+typedef struct {
+    char room_id[64];
+    char current_word[128];
+    char current_drawer[128];
+    char status[32]; // "waiting", "playing", "round_finished"
+    int word_length;
+    int is_guessed;
+    // NUEVO: Sincronización de chat
+    char last_sender[128];
+    char last_message[512];
+    int msg_id;
+} GameRoom;
+
+GameRoom rooms[MAX_ROOMS];
+int room_count = 0;
+
+// Buscar o inicializar una sala
+GameRoom* get_or_create_room(const char* room_id) {
+    for (int i = 0; i < room_count; i++) {
+        if (strcmp(rooms[i].room_id, room_id) == 0) {
+            return &rooms[i];
+        }
+    }
+    if (room_count < MAX_ROOMS) {
+        strcpy(rooms[room_count].room_id, room_id);
+        strcpy(rooms[room_count].status, "waiting");
+        rooms[room_count].current_word[0] = '\0';
+        rooms[room_count].current_drawer[0] = '\0';
+        rooms[room_count].word_length = 0;
+        rooms[room_count].is_guessed = 0;
+        // Agrega estas 3 líneas:
+        rooms[room_count].last_sender[0] = '\0';
+        rooms[room_count].last_message[0] = '\0';
+        rooms[room_count].msg_id = 0;
+        return &rooms[room_count++];
+    }
+    return NULL;
+}
+
+// ──────────────────────────────────────────────
+// Utilerías JSON de extracción lineal
+// ──────────────────────────────────────────────
 void extract_json_value(const char *json, const char *key, char *output) {
     char search_key[64];
     char *start = NULL;
-
-    // Intento 1: "clave": " (con espacio)
     snprintf(search_key, sizeof(search_key), "\"%s\": \"", key);
     start = strstr(json, search_key);
-
-    // Intento 2: "clave":" (sin espacio)
     if (!start) {
         snprintf(search_key, sizeof(search_key), "\"%s\":\"", key);
         start = strstr(json, search_key);
     }
-
     if (start) {
         start += strlen(search_key);
         char *end = strchr(start, '\"');
@@ -45,87 +88,12 @@ void extract_json_value(const char *json, const char *key, char *output) {
     output[0] = '\0';
 }
 
-// Decodifica Base64 usando OpenSSL. Retorna la longitud decodificada o -1 en error.
-int base64_decode(const char *input, unsigned char *output) {
-    BIO *bio, *b64;
-    int input_len = strlen(input);
-
-    b64 = BIO_new(BIO_f_base64());
-    bio = BIO_new_mem_buf(input, input_len);
-    bio = BIO_push(b64, bio);
-
-    // IMPORTANTE: la bandera debe ponerse ANTES de leer.
-    BIO_set_flags(bio, BIO_FLAGS_BASE64_NO_NL);
-
-    int len = BIO_read(bio, output, input_len);
-    BIO_free_all(bio);
-    return len;
-}
-
-// Deriva llave/IV de la APP_KEY y desencripta AES-128-CBC.
-int decrypt_db_field(const char *b64_input, char *plaintext_output) {
-    if (!b64_input || strlen(b64_input) == 0) {
-        plaintext_output[0] = '\0';
-        return -1;
-    }
-
-    // 1. Derivar Clave e IV a partir de la APP_KEY (igual que en Python)
-    unsigned char key[16];
-    unsigned char iv[16];
-    unsigned char sha256_res[SHA256_DIGEST_LENGTH];
-
-    // Clave: primeros 16 bytes del SHA-256 de la APP_KEY
-    SHA256((unsigned char *)APP_KEY, strlen(APP_KEY), sha256_res);
-    memcpy(key, sha256_res, 16);
-
-    // IV: los 16 bytes del MD5 de la APP_KEY
-    MD5((unsigned char *)APP_KEY, strlen(APP_KEY), iv);
-
-    // 2. Decodificar Base64
-    unsigned char ciphertext[1024];
-    int ciphertext_len = base64_decode(b64_input, ciphertext);
-    if (ciphertext_len <= 0) return -1;
-
-    // 3. Desencriptar AES-128-CBC
-    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
-    if (!ctx) return -1;
-
-    // Buffer de salida separado, con margen para un bloque extra.
-    unsigned char plaintext[1024 + EVP_MAX_BLOCK_LENGTH];
-    int len = 0;
-    int plaintext_len = 0;
-
-    if (EVP_DecryptInit_ex(ctx, EVP_aes_128_cbc(), NULL, key, iv) != 1) {
-        EVP_CIPHER_CTX_free(ctx);
-        return -1;
-    }
-
-    if (EVP_DecryptUpdate(ctx, plaintext, &len, ciphertext, ciphertext_len) != 1) {
-        EVP_CIPHER_CTX_free(ctx);
-        return -1;
-    }
-    plaintext_len = len;
-
-    // EVP_DecryptFinal_ex remueve el relleno PKCS7
-    if (EVP_DecryptFinal_ex(ctx, plaintext + len, &len) != 1) {
-        EVP_CIPHER_CTX_free(ctx);
-        return -1; // No estaba cifrado o la clave/IV no coinciden
-    }
-    plaintext_len += len;
-    EVP_CIPHER_CTX_free(ctx);
-
-    // 4. Terminación nula para string en C
-    memcpy(plaintext_output, plaintext, plaintext_len);
-    plaintext_output[plaintext_len] = '\0';
-
-    return plaintext_len;
-}
-
 int main() {
     int server_fd, client_fd;
     struct sockaddr_in server_addr, client_addr;
     socklen_t client_len = sizeof(client_addr);
     char buffer[BUFFER_SIZE];
+    srand(time(NULL)); // Inicializar semilla para palabras aleatorias
 
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
         perror("Error al crear socket");
@@ -149,48 +117,91 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    printf("Servidor TCP (Modo Chat con Desencriptación) escuchando en el puerto %d...\n", PORT);
+    printf("Servidor TCP (Game Master Autoritatvo) escuchando en el puerto %d...\n", PORT);
 
     while (1) {
         client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
-        if (client_fd < 0) {
-            perror("Error en accept");
-            continue;
-        }
+        if (client_fd < 0) continue;
 
         int read_size = recv(client_fd, buffer, BUFFER_SIZE - 1, 0);
         if (read_size > 0) {
             buffer[read_size] = '\0';
 
-            char type[32], raw_room_id[64], raw_player[128], raw_message[1024];
-            char dec_room_id[64], dec_player[128], dec_message[1024];
-
+            char type[32], room_id[64];
             extract_json_value(buffer, "type", type);
-            extract_json_value(buffer, "room_id", raw_room_id);
-            extract_json_value(buffer, "player", raw_player);
-            extract_json_value(buffer, "message", raw_message);
+            extract_json_value(buffer, "room_id", room_id);
 
-            // Si la desencriptación falla (< 0), se asume texto plano.
-            if (decrypt_db_field(raw_room_id, dec_room_id) < 0) {
-                strcpy(dec_room_id, raw_room_id);
-            }
-            if (decrypt_db_field(raw_player, dec_player) < 0) {
-                strcpy(dec_player, raw_player);
-            }
-            if (decrypt_db_field(raw_message, dec_message) < 0) {
-                strcpy(dec_message, raw_message);
-            }
+            GameRoom *room = get_or_create_room(room_id);
+            char response[1024] = {0};
 
-            if (strcmp(type, "MESSAGE") == 0) {
-                printf("[Sala %s] %s: %s\n", dec_room_id, dec_player, dec_message);
-            } else {
-                printf("[JSON Raw]: %s\n", buffer);
+            if (room != NULL) {
+                // ─── ACCIÓN: INICIAR RONDA / SELECCIONAR PALABRA RANDOM ───
+                if (strcmp(type, "START_ROUND") == 0) {
+                    char player[128];
+                    extract_json_value(buffer, "player", player);
+
+                    // Elegir palabra aleatoria del banco
+                    int idx = rand() % WORD_BANK_SIZE;
+                    strcpy(room->current_word, word_bank[idx]);
+                    strcpy(room->current_drawer, player);
+                    strcpy(room->status, "playing");
+                    room->word_length = strlen(room->current_word);
+                    room->is_guessed = 0;
+
+                    printf("[Sala %s] Turno de %s. Palabra asignada: %s\n", room->room_id, room->current_drawer, room->current_word);
+
+                    snprintf(response, sizeof(response),
+                        "{\"status\": \"ok\", \"word\": \"%s\", \"drawer\": \"%s\"}",
+                        room->current_word, room->current_drawer);
+                    send(client_fd, response, strlen(response), 0);
+                }
+
+                // ─── ACCIÓN: PROCESAR INTENTO DE ADIVINAR (CHAT) ───
+                else if (strcmp(type, "MESSAGE") == 0) {
+                    char player[128], message[512];
+                    extract_json_value(buffer, "player", player);
+                    extract_json_value(buffer, "message", message);
+
+                    // Guardamos el mensaje en la memoria de la sala para sincronizar a otros
+                    strcpy(room->last_sender, player);
+                    strcpy(room->last_message, message);
+                    room->msg_id++;
+
+                    // REGLA 1: El dibujante NO puede adivinar
+                    if (strcmp(room->current_drawer, player) == 0) {
+                        printf("[Sala %s] %s (Dibujante) dice: %s\n", room->room_id, player, message);
+                        snprintf(response, sizeof(response), "{\"status\": \"drawer_chat\"}");
+                    }
+                    // REGLA NORMAL: Jugador normal adivina correctamente
+                    else if (strcmp(room->status, "playing") == 0 && strcasecmp(room->current_word, message) == 0) {
+                        room->is_guessed = 1;
+                        strcpy(room->status, "round_finished");
+                        printf("⭐ [Sala %s] ¡%s ADIVINÓ LA PALABRA (%s)! ⭐\n", room->room_id, player, room->current_word);
+
+                        snprintf(response, sizeof(response),
+                            "{\"status\": \"correct\", \"player\": \"%s\", \"word\": \"%s\"}",
+                            player, room->current_word);
+                    }
+                    // REGLA NORMAL: Jugador falla, es solo un chat
+                    else {
+                        printf("[Sala %s] %s: %s\n", room->room_id, player, message);
+                        snprintf(response, sizeof(response), "{\"status\": \"incorrect\"}");
+                    }
+                    send(client_fd, response, strlen(response), 0);
+                }
+
+                // ─── GETTER: CONSULTAR ESTADO DE LA SALA ───
+                else if (strcmp(type, "GET_STATE") == 0) {
+                    snprintf(response, sizeof(response),
+                        "{\"game_status\": \"%s\", \"drawer\": \"%s\", \"current_word\": \"%s\", \"word_length\": %d, \"is_guessed\": %d, \"last_sender\": \"%s\", \"last_message\": \"%s\", \"msg_id\": %d}",
+                        room->status, room->current_drawer, room->current_word, room->word_length, room->is_guessed,
+                        room->last_sender, room->last_message, room->msg_id);
+                    send(client_fd, response, strlen(response), 0);
+                }
             }
         }
-
         close(client_fd);
     }
-
     close(server_fd);
     return 0;
 }

@@ -1,11 +1,12 @@
-import socket
-import json
-import hmac as hmac_lib
-import hashlib
 import base64
-from cryptography.hazmat.primitives.asymmetric import rsa, padding, types
-from cryptography.hazmat.primitives import hashes, serialization
+import hashlib
+import hmac as hmac_lib
+import json
+import socket
 from enum import Enum
+
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa, types
 
 
 class State(Enum):
@@ -18,38 +19,34 @@ class State(Enum):
 
 
 class DBClient:
-    def __init__(self, my_host="127.0.6.6", my_port=3306, db_host="127.0.6.7", db_port=3306, app_key=b"Another day in paradise"):
+    def __init__(
+        self,
+        my_host="127.0.6.6",
+        my_port=3306,
+        db_host="127.0.6.7",
+        db_port=3306,
+        app_key=b"Another day in paradise",
+        timeout=2.0,
+    ):
         self.my_host = my_host
         self.my_port = my_port
         self.db_host = db_host
         self.db_port = db_port
         self.app_key = app_key
+        self.timeout = timeout
 
         self.server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.server.bind((self.my_host, self.my_port))
+        self.server.settimeout(self.timeout)
 
-        self.state = State.IDLE
-
-        # Generar par de claves RSA para esta instancia
         self.__private_key = rsa.generate_private_key(
             public_exponent=65537,
             key_size=2048,
         )
         self.__public_key = self.__private_key.public_key()
-        
-        # Atributo privado para guardar la clave del servidor
         self.__db_pk = None
 
-        print(f"UDP client listening on {self.my_host}:{self.my_port}")
-        # Realizamos el handshake automáticamente al instanciar
         self._exchange_pk()
-
-    # ──────────────────────────────────────────────
-    # Helpers y Criptografía
-    # ──────────────────────────────────────────────
-
-    def _get_string(self, state_enum): 
-        return state_enum.value
 
     def _encrypt(self, message: bytes, pk: types.PUBLIC_KEY_TYPES) -> str:
         if isinstance(message, str):
@@ -59,8 +56,8 @@ class DBClient:
             padding.OAEP(
                 mgf=padding.MGF1(algorithm=hashes.SHA256()),
                 algorithm=hashes.SHA256(),
-                label=None
-            )
+                label=None,
+            ),
         )
         return base64.b64encode(ciphertext).decode()
 
@@ -68,15 +65,14 @@ class DBClient:
         if lk is None:
             lk = self.__private_key
         ciphertext = base64.b64decode(b64_ciphertext)
-        plaintext = lk.decrypt(
+        return lk.decrypt(
             ciphertext,
             padding.OAEP(
                 mgf=padding.MGF1(algorithm=hashes.SHA256()),
                 algorithm=hashes.SHA256(),
-                label=None
-            )
+                label=None,
+            ),
         )
-        return plaintext
 
     def _make_hmac(self, address: str) -> str:
         return hmac_lib.new(self.app_key, address.encode(), hashlib.sha256).hexdigest()
@@ -88,7 +84,7 @@ class DBClient:
     def _public_key_to_pem(self, pk) -> str:
         return pk.public_bytes(
             encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
         ).decode()
 
     def _public_key_from_pem(self, pem_str: str):
@@ -97,34 +93,18 @@ class DBClient:
     def _encrypt_content(self, content: dict, key=None) -> dict:
         if key is None:
             key = self.__db_pk
-        encrypted = {
-            self._encrypt(k, key): self._encrypt(v, key)
-            for k, v in zip(content.keys(), content.values())
+        return {
+            self._encrypt(key_name, key): self._encrypt(value, key)
+            for key_name, value in content.items()
         }
-        return encrypted
 
     def _decrypt_content(self, content: dict, key=None) -> dict:
         if key is None:
             key = self.__private_key
-        decrypted = {
-            self._decrypt(k, key).decode(): self._decrypt(v, key).decode()
-            for k, v in zip(content.keys(), content.values())
-        }
-        return decrypted 
-
-    def _empty_data(self, status=200) -> dict:
         return {
-            "headers": {
-                "ip":   self.my_host,
-                "hmac": self._make_hmac(self.my_host),
-            },
-            "content": {},
-            "status": status
+            self._decrypt(key_name, key).decode(): self._decrypt(value, key).decode()
+            for key_name, value in content.items()
         }
-
-    # ──────────────────────────────────────────────
-    # Red
-    # ──────────────────────────────────────────────
 
     def _mail(self, data: dict) -> int:
         package = json.dumps(data)
@@ -149,15 +129,15 @@ class DBClient:
             return {"status": 200}
 
         print("[ERROR] Invalid credentials")
-        return self._empty_data(400)
+        return {"status": 400}
 
     def _exchange_pk(self):
         data = {
             "headers": {
-                "ip":   self.my_host,
+                "ip": self.my_host,
                 "hmac": self._make_hmac(self.my_host),
             },
-            "pk": self._public_key_to_pem(self.__public_key)
+            "pk": self._public_key_to_pem(self.__public_key),
         }
         self._mail(data)
 
@@ -166,130 +146,62 @@ class DBClient:
         headers = parsed["headers"]
 
         if not self._hmac_ok(headers["ip"], headers["hmac"]):
-            print("[ERROR] Handshake HMAC inválido")
+            print("[ERROR] Handshake HMAC invalido")
             return
 
         self.__db_pk = self._public_key_from_pem(parsed["pk"])
-        print("[HANDSHAKE] Intercambio de claves completado")
 
-    # ──────────────────────────────────────────────
-    # Métodos Públicos de BD
-    # ──────────────────────────────────────────────
-
-    def send(self, message: str, msg_state=None):
-        if msg_state is None:
-            msg_state = self.state
+    def _send_content(self, state, content):
         data = {
             "headers": {
-                "ip":    self.my_host,
-                "hmac":  self._make_hmac(self.my_host),
-                "state": self._get_string(msg_state),
+                "ip": self.my_host,
+                "hmac": self._make_hmac(self.my_host),
+                "state": state.value,
             },
-            "content": {"data": self._encrypt(message, self.__db_pk)}
-        }
-        self._mail(data)
-
-    def save_user(self, username: str):
-        content = {
-            "username":   username,
-            "score":      "-1",
-            "is_playing": "0",
-            "room_id":    "-1",
-        }
-        data = {
-            "headers": {
-                "ip":    self.my_host,
-                "hmac":  self._make_hmac(self.my_host),
-                "state": State.SAVE_USER.value,
-            },
-            "content": self._encrypt_content(content)
+            "content": self._encrypt_content(content),
         }
         self._mail(data)
         package, address = self.server.recvfrom(4096)
-        response = self._unpack(package, address)
-        if response.get("status") == 200:
-            print("[LOG] User Saved")
+        return self._unpack(package, address)
+
+    def save_user(self, username: str):
+        content = {
+            "username": username,
+            "score": "-1",
+            "is_playing": "0",
+            "room_id": "-1",
+        }
+        return self._send_content(State.SAVE_USER, content)
 
     def save_room(self, room_code, status):
         content = {
             "room_code": str(room_code),
-            "status":    str(status),
+            "status": str(status),
         }
-        data = {
-            "headers": {
-                "ip":    self.my_host,
-                "hmac":  self._make_hmac(self.my_host),
-                "state": State.SAVE_ROOM.value,
-            },
-            "content": self._encrypt_content(content)
-        }
-        self._mail(data)
-        package, address = self.server.recvfrom(4096)
-        response = self._unpack(package, address)
-        if response.get("status") == 200:
-            print("[LOG] Room Saved")
+        return self._send_content(State.SAVE_ROOM, content)
 
     def save_guess(self, user_id, game_id, guess, is_correct):
         content = {
-            "user_id":    str(user_id),
-            "game_id":    str(game_id),
-            "guess":      str(guess),
+            "user_id": str(user_id),
+            "game_id": str(game_id),
+            "guess": str(guess),
             "is_correct": str(is_correct),
         }
-        data = {
-            "headers": {
-                "ip":    self.my_host,
-                "hmac":  self._make_hmac(self.my_host),
-                "state": State.SAVE_GUESS.value, 
-            },
-            "content": self._encrypt_content(content)
-        }
-        self._mail(data)
-        package, address = self.server.recvfrom(4096)
-        response = self._unpack(package, address)
-        if response.get("status") == 200:
-            print("[LOG] Guess Saved")
+        return self._send_content(State.SAVE_GUESS, content)
 
     def update_user(self, username: str, score: str = None, is_playing: str = None, room_id: str = None):
         content = {"username": username}
-        
-        if score is not None: content["score"] = str(score)
-        if is_playing is not None: content["is_playing"] = str(is_playing)
-        if room_id is not None: content["room_id"] = str(room_id)
-
-        data = {
-            "headers": {
-                "ip":    self.my_host,
-                "hmac":  self._make_hmac(self.my_host),
-                "state": State.UPDATE_USER.value,
-            },
-            "content": self._encrypt_content(content)
-        }
-        self._mail(data)
-        package, address = self.server.recvfrom(4096)
-        response = self._unpack(package, address)
-        if response.get("status") == 200:
-            print(f"[LOG] User '{username}' Updated")
-        else:
-            print(f"[ERROR] Could not update user '{username}'")
+        if score is not None:
+            content["score"] = str(score)
+        if is_playing is not None:
+            content["is_playing"] = str(is_playing)
+        if room_id is not None:
+            content["room_id"] = str(room_id)
+        return self._send_content(State.UPDATE_USER, content)
 
     def update_room(self, room_code: str, status: str):
         content = {
             "room_code": str(room_code),
-            "status":    str(status),
+            "status": str(status),
         }
-        data = {
-            "headers": {
-                "ip":    self.my_host,
-                "hmac":  self._make_hmac(self.my_host),
-                "state": State.UPDATE_ROOM.value,
-            },
-            "content": self._encrypt_content(content)
-        }
-        self._mail(data)
-        package, address = self.server.recvfrom(4096)
-        response = self._unpack(package, address)
-        if response.get("status") == 200:
-            print(f"[LOG] Room '{room_code}' Updated")
-        else:
-            print(f"[ERROR] Could not update room '{room_code}'")
+        return self._send_content(State.UPDATE_ROOM, content)

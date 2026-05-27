@@ -134,6 +134,28 @@ body {
     table-layout: fixed;
 }
 
+.round-panel {
+    display: table;
+    width: 100%;
+    background: var(--bg-main);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    margin-bottom: 20px;
+    padding: 12px;
+    box-sizing: border-box;
+}
+
+.round-item {
+    display: table-cell;
+    width: 33.33%;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.round-item strong {
+    color: var(--accent-success);
+}
+
 .grid-col-players { display: table-cell; width: 20%; vertical-align: top; padding-right: 15px; }
 .grid-col-canvas  { display: table-cell; width: 55%; vertical-align: top; padding-right: 15px; padding-left: 15px; }
 .grid-col-chat    { display: table-cell; width: 25%; vertical-align: top; padding-left: 15px; }
@@ -170,6 +192,11 @@ canvas {
     background-color: white;
     cursor: crosshair;
     border-radius: 8px;
+}
+
+.canvas-disabled {
+    cursor: not-allowed;
+    opacity: 0.72;
 }
 
 /* Barra de Herramientas de Dibujo */
@@ -225,4 +252,33 @@ canvas {
     width: 100%;
     background: var(--bg-card);
     border-top: 1px solid var(--border-color);
+}
+
+.score-list {
+    background: var(--bg-main);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 10px;
+}
+
+.score-row {
+    display: table;
+    width: 100%;
+    padding: 8px 4px;
+    border-bottom: 1px solid var(--border-color);
+    box-sizing: border-box;
+}
+
+.score-row:last-child {
+    border-bottom: none;
+}
+
+.score-row span,
+.score-row strong {
+    display: table-cell;
+}
+
+.score-row strong {
+    color: var(--accent-success);
+    text-align: right;
 }

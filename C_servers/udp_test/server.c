@@ -333,7 +333,33 @@ int main(int argc, char* argv[]) {
                     const char *msg  = cJSON_IsString(message) ? message->valuestring : "";
 
                     printf("[Sala %s] %s: %s\n", r_id, ply, msg);
-                } else {
+                } 
+                else if (cJSON_IsString(type) && strcmp(type->valuestring, "UPDATE_CANVAS") == 0) {
+                    cJSON *endX = cJSON_GetObjectItemCaseSensitive(json, "endX");
+                    cJSON *endY = cJSON_GetObjectItemCaseSensitive(json, "endY");
+                    cJSON *color = cJSON_GetObjectItemCaseSensitive(json, "color");
+
+                    if (cJSON_IsNumber(endX) && cJSON_IsNumber(endY) && painter_points_count < 5000) {
+                        painter_points[painter_points_count][0] = endX->valueint;
+                        painter_points[painter_points_count][1] = endY->valueint;
+                        painter_points_count++;
+                    }
+
+                    if (cJSON_IsString(color) && painter_colors_count < 5000) {
+                        strncpy(painter_colors[painter_colors_count], color->valuestring, sizeof(painter_colors[painter_colors_count]) - 1);
+                        painter_colors_count++;
+                    }
+
+                    if (painter_sizes_count < 5000) {
+                        strncpy(painter_sizes[painter_sizes_count], "1", sizeof(painter_sizes[painter_sizes_count]) - 1);
+                        painter_sizes_count++;
+                    }
+
+                    guardar_servidor();
+
+                    printf("[LIENZO] Coordenada guardada: (%d, %d) | Color: %s | Total puntos: %d. ¡JSON Guardado!\n", endX ? endX->valueint : 0, endY ? endY->valueint : 0, color ? color->valuestring : "Ninguno", painter_points_count);
+                } 
+                else {
                     printf("[JSON Recibido (Otro Tipo o Estructura)]: %s\n", buffer);
                 }
 

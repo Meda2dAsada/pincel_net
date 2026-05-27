@@ -1,33 +1,56 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
-    <title>Lobby</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PincelNet - Lobby</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 
-<h1>Lobby</h1>
+<div class="container lobby-wrapper">
+    <div class="lobby-title">PincelNet 🎨</div>
+    <p style="color: var(--text-muted); margin-bottom: 30px;">Proyecto Distribuido - Pinturillo</p>
 
-<form method="POST">
+    <form method="POST">
+        <div class="form-group">
+            <label for="player_name">Nickname del Jugador</label>
+            <input 
+                type="text" 
+                id="player_name"
+                name="player_name" 
+                class="input-custom" 
+                placeholder="Ej. Juanito_Pro" 
+                required
+            >
+        </div>
 
-    <input
-        type="text"
-        name="player_name"
-        placeholder="Nombre"
-        required
-    >
+        <div class="form-group">
+            <label for="room_id">Código de Sala</label>
+            <input 
+                type="text" 
+                id="room_id"
+                name="room_id" 
+                class="input-custom" 
+                placeholder="Ej. Sala_Calculo" 
+                required
+            >
+        </div>
 
-    <input
-        type="text"
-        name="room_id"
-        placeholder="Sala"
-        required
-    >
+        <button type="submit" class="btn-primary" style="margin-top: 10px;">
+            Ingresar al Juego
+        </button>
+    </form>
 
-    <button type="submit">
-        Entrar
-    </button>
-
-</form>
+    <div class="rooms-section">
+        <h3 style="margin-top: 0; text-align: left; color: var(--accent-success);">Salas Activas en el Servidor</h3>
+        <ul class="room-list">
+            <li class="room-item" style="color: var(--text-muted); font-size: 0.9rem;">
+                No hay salas públicas. Crea una ingresando un código arriba.
+            </li>
+        </ul>
+    </div>
+</div>
 
 </body>
 </html>

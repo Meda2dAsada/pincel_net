@@ -1,3 +1,4 @@
+// static/game.js
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 
@@ -155,6 +156,7 @@ canvas.addEventListener("mousemove", (e) => {
 
     drawLine(lastX, lastY, currentX, currentY, color, size);
 
+    // Empaquetar vectores de trayectoria para enviar a Flask (middleware hacia el Socket en C)
     fetch("/draw", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

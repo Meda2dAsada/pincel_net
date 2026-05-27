@@ -1,4 +1,5 @@
 from flask import Blueprint, request, session, redirect, url_for, render_template
+from db_client import DBClient
 
 from services.db_client import DBClient
 from services.game_state import game_state

@@ -4,7 +4,15 @@ import hmac as hmac_lib
 import hashlib
 import base64
 from cryptography.hazmat.primitives.asymmetric import rsa, padding, types
+from cryptography.hazmat.primitives import padding as sym_padding
 from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+
+import base64
+import hashlib
+
+
 from enum import Enum
 
 from database import get_session
@@ -18,17 +26,65 @@ MY_PORT = 3306
 CLIENT_HOST = "127.0.6.6"
 CLIENT_PORT = 3306
 
+UDP_HOST = "127.0.6.5"
+UDP_PORT = 5002
+
 APP_KEY = b"Another day in paradise"
+
+# ──────────────────────────────────────────────
+# Criptografía para Base de Datos (AES-128-CBC)
+# ──────────────────────────────────────────────
+# Derivamos la llave (16 bytes) y el IV (16 bytes) de la APP_KEY
+DB_AES_KEY = hashlib.sha256(APP_KEY).digest()[:16]  # Primeros 16 bytes del hash SHA-256
+DB_AES_IV  = hashlib.md5(APP_KEY).digest()          # 16 bytes del hash MD5
+
+def db_encrypt(data) -> str:
+    """Encripta un string usando AES-128-CBC y retorna Base64."""
+    if not data:
+        return data
+
+    if not isinstance(data, (str, bytes)):
+        data = str(data)
+
+    if isinstance(data, str):
+        data = data.encode('utf-8')
+
+    cipher = Cipher(algorithms.AES128(DB_AES_KEY), modes.CBC(DB_AES_IV), backend=default_backend())
+    encryptor = cipher.encryptor()
+
+    padder = sym_padding.PKCS7(128).padder()
+    padded_data = padder.update(data) + padder.finalize()
+
+    ciphertext = encryptor.update(padded_data) + encryptor.finalize()
+    return base64.b64encode(ciphertext).decode('utf-8')
+
+
+def db_decrypt(b64_data: str) -> str:
+    """Desencripta un string en Base64 usando AES-128-CBC."""
+    if not b64_data: 
+        return b64_data
+    ciphertext = base64.b64decode(b64_data)
+    cipher = Cipher(algorithms.AES128(DB_AES_KEY), modes.CBC(DB_AES_IV), backend=default_backend())
+    decryptor = cipher.decryptor()
+    
+    padded_data = decryptor.update(ciphertext) + decryptor.finalize()
+    
+    unpadder = padding.PKCS7(128).unpadder()
+    data = unpadder.update(padded_data) + unpadder.finalize()
+    return data.decode('utf-8')
+
 
 server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 server.bind((MY_HOST, MY_PORT))
 
 
 class State(Enum):
-    IDLE      = "idle"
-    SAVE_USER = "save_user"
-    SAVE_ROOM = "save_room"
+    IDLE       = "idle"
+    SAVE_USER  = "save_user"
+    SAVE_ROOM  = "save_room"
     SAVE_GUESS = "save_guess"
+    UPDATE_USER = "update_user" 
+    UPDATE_ROOM = "update_room"
 
 
 STATE = State.IDLE
@@ -115,6 +171,18 @@ def mail(data: dict) -> int:
     except Exception as e:
         print("[UDP ERROR]", e)
         return -1
+    
+
+def mail_to_udp(data: dict, HOST, PORT) -> int:
+    package = json.dumps(data)
+    try:
+        udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        size = udp_socket.sendto(package.encode("utf-8"), (HOST, PORT))
+        udp_socket.close()
+        return size
+    except Exception as e:
+        print("[UDP ERROR]", e)
+        return -1
 
 
 def empty_data(status: int = 400) -> dict:
@@ -164,31 +232,29 @@ def exchange_pk():
 # ──────────────────────────────────────────────
 
 def save_user(content: dict):
-    """
-    Espera en content:
-        username, score, is_playing, room_id
-    """
     session = get_session()
     try:
         username = content.get("username", "").strip()
         if not username:
-            print("[DB] Error: username vacío")
             mail(empty_data(400))
             return
 
-        # Evitar duplicados
-        existing = User.find_by_username(session, username)
+        enc_username = db_encrypt(username) # <-- ENCRIPTAR ANTES DE BUSCAR/GUARDAR
+
+        existing = User.find_by_username(session, enc_username)
         if existing:
-            print(f"[DB] Usuario '{username}' ya existe — id={existing.id}")
             mail(empty_data(200))
             return
 
-        user = User.create(session, username=username)
-        print(f"[DB] User Saved — {user}")
+        # Absolutamente todo encriptado
+        enc_score = db_encrypt("-1")
+        enc_is_playing = db_encrypt("0")
+        enc_room_id = db_encrypt("-1")
+
+        user = User.create(session, username=enc_username, score=enc_score, is_playing=enc_is_playing, room_id=enc_room_id)
         mail(empty_data(200))
 
     except Exception as e:
-        print(f"[DB ERROR] save_user: {e}")
         session.rollback()
         mail(empty_data(500))
     finally:
@@ -196,34 +262,23 @@ def save_user(content: dict):
 
 
 def save_room(content: dict):
-    """
-    Espera en content:
-        room_code, status
-    """
     session = get_session()
     try:
         room_code = str(content.get("room_code", "")).strip()
         status    = str(content.get("status", "waiting")).strip()
 
-        if not room_code:
-            print("[DB] Error: room_code vacío")
-            mail(empty_data(400))
-            return
+        enc_room_code = db_encrypt(room_code)
+        enc_status = db_encrypt(status)
 
-        existing = Room.find_by_code(session, room_code)
+        existing = Room.find_by_code(session, enc_room_code)
         if existing:
-            # Actualizar estado si ya existe
-            existing.status = status
+            existing.status = enc_status
             existing.save(session)
-            print(f"[DB] Room Updated — {existing}")
         else:
-            room = Room.create(session, room_code=room_code, status=status)
-            print(f"[DB] Room Saved — {room}")
+            room = Room.create(session, room_code=enc_room_code, status=enc_status)
 
         mail(empty_data(200))
-
     except Exception as e:
-        print(f"[DB ERROR] save_room: {e}")
         session.rollback()
         mail(empty_data(500))
     finally:
@@ -242,6 +297,11 @@ def save_guess(content: dict):
         guess      = content.get("guess", "").strip()
         is_correct = content.get("is_correct", "false").lower() in ("true", "1", "yes")
 
+        enc_user_id = db_encrypt(str(user_id))
+        enc_game_id = db_encrypt(str(game_id))
+        enc_guess = db_encrypt(guess)
+        enc_is_correct = db_encrypt(is_correct)
+        
         if user_id < 0 or game_id < 0 or not guess:
             print("[DB] Error: datos de guess incompletos")
             mail(empty_data(400))
@@ -249,11 +309,12 @@ def save_guess(content: dict):
 
         record = Guess.create(
             session,
-            user_id=user_id,
-            game_id=game_id,
-            guess=guess,
-            is_correct=is_correct,
+            user_id=enc_user_id,
+            game_id=enc_game_id,
+            guess=enc_guess,
+            is_correct=enc_is_correct,
         )
+        
         print(f"[DB] Guess Saved — {record}")
         mail(empty_data(200))
 
@@ -264,6 +325,63 @@ def save_guess(content: dict):
     finally:
         session.close()
 
+
+def update_user(content: dict):
+    session = get_session()
+    try:
+        username = content.get("username", "").strip()
+        score = content.get("score")
+        is_playing = content.get("is_playing")
+        room_id = content.get("room_id")
+
+        enc_username = db_encrypt(username)
+        existing = User.find_by_username(session, enc_username)
+        
+        if not existing:
+            mail(empty_data(404)) # Not found
+            return
+
+        # Actualizar sólo lo que se envió en el content
+        if score is not None:
+            existing.score = db_encrypt(str(score))
+        if is_playing is not None:
+            existing.is_playing = db_encrypt(str(is_playing))
+        if room_id is not None:
+            existing.room_id = db_encrypt(str(room_id))
+
+        existing.save(session)
+        mail(empty_data(200))
+
+    except Exception as e:
+        session.rollback()
+        mail(empty_data(500))
+    finally:
+        session.close()
+
+def update_room(content: dict):
+    session = get_session()
+    try:
+        room_code = str(content.get("room_code", "")).strip()
+        status = content.get("status")
+
+        enc_room_code = db_encrypt(room_code)
+        existing = Room.find_by_code(session, enc_room_code)
+
+        if not existing:
+            mail(empty_data(404))
+            return
+
+        if status is not None:
+            existing.status = db_encrypt(str(status))
+
+        existing.save(session)
+        mail(empty_data(200))
+
+    except Exception as e:
+        session.rollback()
+        mail(empty_data(500))
+    finally:
+        session.close()
 
 # ──────────────────────────────────────────────
 # Main loop
@@ -288,8 +406,12 @@ if __name__ == "__main__":
                     break
                 case State.SAVE_USER:
                     save_user(content)
+                case State.UPDATE_USER:
+                    update_user(content)
                 case State.SAVE_ROOM:
                     save_room(content)
+                case State.UPDATE_ROOM:
+                    update_room(content)
                 case State.SAVE_GUESS:
                     save_guess(content)
                 case _:

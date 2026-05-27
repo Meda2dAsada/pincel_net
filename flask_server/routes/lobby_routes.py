@@ -39,6 +39,6 @@ def lobby():
             print(f"[ERROR DB] No se pudo guardar info de lobby: {e}")
 
         '''
-        return redirect(url_for("game.game", room_id=room_id))
+        return redirect(url_for("game_bp.game", room_id=room_id))
 
     return render_template("lobby.html")

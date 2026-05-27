@@ -1,8 +1,6 @@
 import socket
 import json
-
-TCP_HOST = "localhost"
-TCP_PORT = 15000
+from config import TCP_HOST, TCP_PORT
 
 def send_chat_message(room_id, player, message):
     data = {

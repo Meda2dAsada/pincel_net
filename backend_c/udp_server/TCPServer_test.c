@@ -335,9 +335,12 @@ int main(int argc, char* argv[]) {
                     printf("[Sala %s] %s: %s\n", r_id, ply, msg);
                 } 
                 else if (cJSON_IsString(type) && strcmp(type->valuestring, "UPDATE_CANVAS") == 0) {
+                    cJSON *startX = cJSON_GetObjectItemCaseSensitive(json, "startX");
+                    cJSON *startY = cJSON_GetObjectItemCaseSensitive(json, "startY");
                     cJSON *endX = cJSON_GetObjectItemCaseSensitive(json, "endX");
                     cJSON *endY = cJSON_GetObjectItemCaseSensitive(json, "endY");
                     cJSON *color = cJSON_GetObjectItemCaseSensitive(json, "color");
+                    cJSON *size = cJSON_GetObjectItemCaseSensitive(json, "size");
 
                     if (cJSON_IsNumber(endX) && cJSON_IsNumber(endY) && painter_points_count < 5000) {
                         painter_points[painter_points_count][0] = endX->valueint;
@@ -350,14 +353,26 @@ int main(int argc, char* argv[]) {
                         painter_colors_count++;
                     }
 
-                    if (painter_sizes_count < 5000) {
-                        strncpy(painter_sizes[painter_sizes_count], "1", sizeof(painter_sizes[painter_sizes_count]) - 1);
+                    if (cJSON_IsString(size) && painter_sizes_count < 5000) {
+                        strncpy(painter_sizes[painter_sizes_count], size->valuestring, sizeof(painter_sizes[painter_sizes_count]) - 1);
+                         painter_sizes_count++;
+                    } else if (cJSON_IsNumber(size) && painter_sizes_count < 5000) {
+                        snprintf(painter_sizes[painter_sizes_count], sizeof(painter_sizes[painter_sizes_count]), "%d", size->valueint);
                         painter_sizes_count++;
                     }
 
                     guardar_servidor();
 
-                    printf("[LIENZO] Coordenada guardada: (%d, %d) | Color: %s | Total puntos: %d. ¡JSON Guardado!\n", endX ? endX->valueint : 0, endY ? endY->valueint : 0, color ? color->valuestring : "Ninguno", painter_points_count);
+                    printf(
+                        "[LIENZO] Trazo guardado: (%d,%d) -> (%d,%d) | Color: %s | Size: %s | Total puntos: %d\n",
+                        startX ? startX->valueint : 0,
+                        startY ? startY->valueint : 0,
+                        endX ? endX->valueint : 0,
+                        endY ? endY->valueint : 0,
+                        color && cJSON_IsString(color) ? color->valuestring : "Ninguno",
+                        size && cJSON_IsString(size) ? size->valuestring : "default",
+                        painter_points_count
+                    );
                 } 
                 else {
                     printf("[JSON Recibido (Otro Tipo o Estructura)]: %s\n", buffer);

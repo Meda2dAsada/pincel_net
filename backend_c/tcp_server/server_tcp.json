@@ -1,0 +1,27 @@
+{
+    "gameStarted": true,
+
+    "config": {
+
+        "server": {
+            "id": 123456,
+            "time": 42,
+            "word": "honduras"
+        },
+
+        "players": {
+            "count": 5,
+            "names": ["iker", "carlos", "ro", "uriel", "alexis"],
+            "ids": [0, 1, 2, 3, 4],
+            "points": [69, 12, 56, 3, 67],
+            "answerCorrectly": [true, false, true, false, false]
+        },
+
+        "painter": {
+            "id": 0,
+            "points": [[1, 2], [3, 4], [5, 6]],
+            "colors": ["blue", "red", "green"],
+            "size": ["1", "1", "2"]
+        }
+    }
+}

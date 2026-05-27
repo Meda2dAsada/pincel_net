@@ -1,5 +1,5 @@
 from flask import Blueprint, request, session, redirect, url_for, render_template
-from db_client import DBClient
+from services.db_client import DBClient
 
 lobby_bp = Blueprint("lobby", __name__)
 

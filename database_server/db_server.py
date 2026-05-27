@@ -85,6 +85,7 @@ class State(Enum):
     SAVE_GUESS = "save_guess"
     UPDATE_USER = "update_user" 
     UPDATE_ROOM = "update_room"
+    GET_GUESSES = "get_guesses"
 
 
 STATE = State.IDLE
@@ -325,6 +326,30 @@ def save_guess(content: dict):
     finally:
         session.close()
 
+def get_guesses(content: dict, address: tuple):
+    session = get_session()
+    try:
+        room_id = content.get("room_id")
+        # Buscamos la sala para obtener su ID numérico si room_id es el código
+        enc_room_code = db_encrypt(str(room_id))
+        room = Room.find_by_code(session, enc_room_code)
+        
+        if not room:
+            mail_to_udp(empty_data(404), address[0], address[1])
+            return
+
+        guesses = Guess.by_game(session, room.id)
+        # Formateamos los mensajes (ya están encriptados en la DB)
+        history = []
+        for g in guesses:
+            history.append({"player": g.user.username, "msg": g.guess})
+
+        response = {"headers": {"state": "HISTORY"}, "history": history, "status": 200}
+        mail_to_udp(response, address[0], address[1])
+    except Exception as e:
+        print(f"Error fetching history: {e}")
+    finally:
+        session.close()
 
 def update_user(content: dict):
     session = get_session()
@@ -414,5 +439,7 @@ if __name__ == "__main__":
                     update_room(content)
                 case State.SAVE_GUESS:
                     save_guess(content)
+                case State.GET_GUESSES:
+                    get_guesses(content, address)
                 case _:
                     break

@@ -101,6 +101,53 @@ function sendGuess() {
     input.value = "";
 }
 
+// --- Lógica de Escucha Constante (Socket) ---
+// Implementación de WebSocket para recibir datos del TCPServer en tiempo real.
+// Se asume que el servidor TCP está expuesto vía WebSocket en un puerto (ej. 15001)
+const socket = new WebSocket(`ws://${window.location.hostname}:15001`);
+
+socket.onopen = () => {
+    console.log("Conectado al servidor de Pinturillo");
+    // Al entrar a la sala, solicitamos el historial (SYNC) para cargar mensajes previos de la DB
+    socket.send(JSON.stringify({
+        type: "SYNC",
+        room_id: ROOM_ID
+    }));
+};
+
+socket.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+
+    // 1. Manejar Historial (Datos que TCPServer sacó de la DB)
+    if (data.headers && data.headers.state === "HISTORY") {
+        // Limpiamos el chat antes de cargar el historial si es necesario
+        // document.getElementById("chatBox").innerHTML = ""; 
+        data.history.forEach(item => {
+            appendMessage(item.player, item.msg);
+        });
+    } 
+    // 2. Manejar Mensajes/Guesses en tiempo real (Broadcast desde el servidor C)
+    else if (data.type === "MESSAGE" || data.type === "GUESS") {
+        // Evitamos duplicar nuestro propio mensaje si el server nos lo devuelve
+        if (data.player !== PLAYER_NAME) {
+            appendMessage(data.player, data.message);
+        }
+    }
+    // 3. Manejar Dibujo en tiempo real
+    else if (data.startX !== undefined) {
+        renderRemoteDrawing(data);
+    }
+};
+
+function renderRemoteDrawing(data) {
+    ctx.beginPath();
+    ctx.moveTo(data.startX, data.startY);
+    ctx.lineTo(data.endX, data.endY);
+    ctx.strokeStyle = data.color;
+    ctx.lineWidth = data.size;
+    ctx.stroke();
+}
+
 function handleKeyPress(e) {
     if (e.key === "Enter") {
         sendGuess();

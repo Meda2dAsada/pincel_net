@@ -2,7 +2,7 @@ from flask import Blueprint, session, render_template, request, jsonify
 from routes.lobby_routes import rooms
 from services.udp_client import send_draw_event
 from services.tcp_client import send_chat_message
-from db_client import DBClient
+from services.db_client import DBClient
 
 game_bp = Blueprint("game", __name__)
 

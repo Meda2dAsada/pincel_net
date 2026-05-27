@@ -1,8 +1,8 @@
-"""initial
+"""create users rooms guesses
 
-Revision ID: 879bf133bb29
+Revision ID: 251868058ed7
 Revises: 
-Create Date: 2026-05-26 11:52:36.281249
+Create Date: 2026-05-26 17:22:54.047349
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '879bf133bb29'
+revision: str = '251868058ed7'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

@@ -3,7 +3,7 @@ from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
 # Cambia estos valores por los de tu HeidiSQL local
 DB_USER     = "root"
-DB_PASSWORD = ""
+DB_PASSWORD = "1234"
 DB_HOST     = "127.0.0.1"
 DB_PORT     = 3306
 DB_NAME     = "guessing_game"

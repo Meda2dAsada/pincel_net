@@ -29,6 +29,7 @@
     - Procesa dibujo: UPDATE_CANVAS.
     - Procesa limpieza de canvas: CLEAR_CANVAS.
     - Procesa lógica de juego: START_ROUND, GET_STATE.
+    - Sistema de puntajes por sala.
     - Guarda estado del canvas en server_tcp.json.
     - Atiende múltiples clientes usando pthread.
 */
@@ -44,6 +45,13 @@ typedef struct {
     int size;
 } DrawLine;
 
+#define MAX_PLAYERS 10
+
+typedef struct {
+    char username[128];
+    int score;
+} PlayerScore;
+
 // Estructura para el estado de juego por sala
 typedef struct {
     char room_id[64];
@@ -55,6 +63,9 @@ typedef struct {
     char last_sender[128];
     char last_message[512];
     int msg_id;
+    // Sistema de puntajes
+    PlayerScore players[MAX_PLAYERS];
+    int player_count;
 } GameRoom;
 
 #define MAX_ROOMS 100
@@ -91,9 +102,28 @@ GameRoom* get_or_create_room(const char* room_id) {
         rooms[room_count].last_sender[0] = '\0';
         rooms[room_count].last_message[0] = '\0';
         rooms[room_count].msg_id = 0;
+        rooms[room_count].player_count = 0;
         return &rooms[room_count++];
     }
     return NULL;
+}
+
+/* =========================================================
+   Sistema de puntajes
+   ========================================================= */
+void add_points(GameRoom* room, const char* username, int points) {
+    for (int i = 0; i < room->player_count; i++) {
+        if (strcmp(room->players[i].username, username) == 0) {
+            room->players[i].score += points;
+            return;
+        }
+    }
+    // Si no existe en la lista, lo creamos
+    if (room->player_count < MAX_PLAYERS) {
+        strncpy(room->players[room->player_count].username, username, 127);
+        room->players[room->player_count].score = points;
+        room->player_count++;
+    }
 }
 
 /* =========================================================
@@ -312,6 +342,8 @@ void handle_message(int client_fd, cJSON *json) {
     pthread_mutex_lock(&state_mutex);
     GameRoom *room = get_or_create_room(r);
     if (room) {
+        // Registramos su presencia en el marcador
+        add_points(room, p, 0);
         strcpy(room->last_sender, p);
         strcpy(room->last_message, m);
         room->msg_id++;
@@ -324,6 +356,8 @@ void handle_message(int client_fd, cJSON *json) {
         else if (strcmp(room->status, "playing") == 0 && strcasecmp(room->current_word, m) == 0) {
             room->is_guessed = 1;
             strcpy(room->status, "round_finished");
+            // ¡PREMIO! Sumamos 10 puntos al jugador
+            add_points(room, p, 10);
             printf("⭐ [Sala %s] ¡%s ADIVINÓ LA PALABRA (%s)! ⭐\n", r, p, room->current_word);
             snprintf(response, sizeof(response),
                 "{\"status\": \"correct\", \"player\": \"%s\", \"word\": \"%s\"}",
@@ -447,9 +481,12 @@ void handle_start_round(int client_fd, cJSON *json) {
     pthread_mutex_lock(&state_mutex);
     GameRoom *room = get_or_create_room(cJSON_IsString(room_id) ? room_id->valuestring : "default");
     if (room) {
+        const char *p = cJSON_IsString(player) ? player->valuestring : "anonymous";
+        add_points(room, p, 0); // Registramos al que inicia la ronda
+
         int idx = rand() % WORD_BANK_SIZE;
         strcpy(room->current_word, word_bank[idx]);
-        strncpy(room->current_drawer, cJSON_IsString(player) ? player->valuestring : "anonymous", 127);
+        strncpy(room->current_drawer, p, 127);
         strcpy(room->status, "playing");
         room->word_length = strlen(room->current_word);
         room->is_guessed = 0;
@@ -465,20 +502,37 @@ void handle_start_round(int client_fd, cJSON *json) {
 
 void handle_get_state(int client_fd, cJSON *json) {
     cJSON *room_id = cJSON_GetObjectItemCaseSensitive(json, "room_id");
-    char response[1024] = {0};
 
     pthread_mutex_lock(&state_mutex);
     GameRoom *room = get_or_create_room(cJSON_IsString(room_id) ? room_id->valuestring : "default");
     if (room) {
-        snprintf(response, sizeof(response),
-            "{\"game_status\": \"%s\", \"drawer\": \"%s\", \"current_word\": \"%s\", \"word_length\": %d, \"is_guessed\": %d, \"last_sender\": \"%s\", \"last_message\": \"%s\", \"msg_id\": %d}",
-            room->status, room->current_drawer, room->current_word, room->word_length, room->is_guessed,
-            room->last_sender, room->last_message, room->msg_id);
+        cJSON *root = cJSON_CreateObject();
+        cJSON_AddStringToObject(root, "game_status", room->status);
+        cJSON_AddStringToObject(root, "drawer", room->current_drawer);
+        cJSON_AddStringToObject(root, "current_word", room->current_word);
+        cJSON_AddNumberToObject(root, "word_length", room->word_length);
+        cJSON_AddNumberToObject(root, "is_guessed", room->is_guessed);
+        cJSON_AddStringToObject(root, "last_sender", room->last_sender);
+        cJSON_AddStringToObject(root, "last_message", room->last_message);
+        cJSON_AddNumberToObject(root, "msg_id", room->msg_id);
+
+        cJSON *scores = cJSON_CreateArray();
+        for (int i = 0; i < room->player_count; i++) {
+            cJSON *p_obj = cJSON_CreateObject();
+            cJSON_AddStringToObject(p_obj, "name", room->players[i].username);
+            cJSON_AddNumberToObject(p_obj, "score", room->players[i].score);
+            cJSON_AddItemToArray(scores, p_obj);
+        }
+        cJSON_AddItemToObject(root, "scores", scores);
+
+        char *json_out = cJSON_PrintUnformatted(root);
+        send(client_fd, json_out, strlen(json_out), 0);
+        free(json_out);
+        cJSON_Delete(root);
     } else {
-        snprintf(response, sizeof(response), "{\"status\": \"error\"}");
+        send(client_fd, "{\"status\": \"error\"}", 19, 0);
     }
     pthread_mutex_unlock(&state_mutex);
-    send(client_fd, response, strlen(response), 0);
 }
 
 /* =========================================================

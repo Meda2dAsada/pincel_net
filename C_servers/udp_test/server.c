@@ -14,6 +14,7 @@
 
 // --- VARIABLES GLOBALES DEL JUEGO A RESTAURAR ---
 bool gameStarted = false;
+int server_id = 0;
 int server_time = 0;
 char server_word[256] = "";
 
@@ -28,6 +29,8 @@ int painter_points[5000][2];
 int painter_points_count = 0;
 char painter_colors[5000][20]; 
 int painter_colors_count = 0;
+char painter_sizes[5000][10];  
+int painter_sizes_count = 0;
 
 void* send_heartbeat(void* arg) {
     int sockfd;
@@ -52,6 +55,76 @@ void* send_heartbeat(void* arg) {
 
     close(sockfd);
     pthread_exit(NULL);
+}
+
+// --- FUNCIÓN PARA GUARDAR EL ESTADO ACTUAL EN EL JSON ---
+void guardar_servidor() {
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "gameStarted", gameStarted);
+
+    cJSON *config = cJSON_CreateObject();
+    cJSON_AddItemToObject(root, "config", config);
+
+    cJSON *server = cJSON_CreateObject();
+    cJSON_AddNumberToObject(server, "id", server_id); 
+    cJSON_AddNumberToObject(server, "time", server_time);
+    cJSON_AddStringToObject(server, "word", server_word);
+    cJSON_AddItemToObject(config, "server", server);
+
+    cJSON *players = cJSON_CreateObject();
+    cJSON_AddNumberToObject(players, "count", player_count);
+    
+    cJSON *names = cJSON_CreateArray();
+    for (int i = 0; i < player_count; i++) {
+        cJSON_AddItemToArray(names, cJSON_CreateString(player_names[i]));
+    }
+    cJSON_AddItemToObject(players, "names", names);
+    
+    cJSON_AddItemToObject(players, "ids", cJSON_CreateIntArray(player_ids, player_count));
+    cJSON_AddItemToObject(players, "points", cJSON_CreateIntArray(player_points, player_count));
+    
+    cJSON *answers = cJSON_CreateArray();
+    for (int i = 0; i < player_count; i++) {
+        cJSON_AddItemToArray(answers, cJSON_CreateBool(player_answerCorrectly[i]));
+    }
+    cJSON_AddItemToObject(players, "answerCorrectly", answers);
+    cJSON_AddItemToObject(config, "players", players);
+
+    cJSON *painter = cJSON_CreateObject();
+    cJSON_AddNumberToObject(painter, "id", painter_id);
+    
+    cJSON *points_array = cJSON_CreateArray();
+    for (int i = 0; i < painter_points_count; i++) {
+        cJSON *sub_point = cJSON_CreateArray();
+        cJSON_AddItemToArray(sub_point, cJSON_CreateNumber(painter_points[i][0]));
+        cJSON_AddItemToArray(sub_point, cJSON_CreateNumber(painter_points[i][1]));
+        cJSON_AddItemToArray(points_array, sub_point);
+    }
+    cJSON_AddItemToObject(painter, "points", points_array);
+    
+    cJSON *colors_array = cJSON_CreateArray();
+    for (int i = 0; i < painter_colors_count; i++) {
+        cJSON_AddItemToArray(colors_array, cJSON_CreateString(painter_colors[i]));
+    }
+    cJSON_AddItemToObject(painter, "colors", colors_array);
+
+    cJSON *sizes_array = cJSON_CreateArray();
+    for (int i = 0; i < painter_sizes_count; i++) {
+        cJSON_AddItemToArray(sizes_array, cJSON_CreateString(painter_sizes[i]));
+    }
+    cJSON_AddItemToObject(painter, "size", sizes_array);
+    
+    cJSON_AddItemToObject(config, "painter", painter);
+
+    char *json_string = cJSON_Print(root);
+    FILE *file = fopen("server_tcp.json", "w");
+    if (file != NULL) {
+        fputs(json_string, file);
+        fclose(file);
+    }
+    
+    cJSON_Delete(root);
+    free(json_string);
 }
 
 // --- FUNCIÓN PARA CARGAR LA MEMORIA DEL JSON ---
@@ -88,9 +161,11 @@ void recuperar_servidor() {
         
         cJSON *server = cJSON_GetObjectItemCaseSensitive(config, "server");
         if (server != NULL) {
+            cJSON *id = cJSON_GetObjectItemCaseSensitive(server, "id");
             cJSON *time = cJSON_GetObjectItemCaseSensitive(server, "time");
             cJSON *word = cJSON_GetObjectItemCaseSensitive(server, "word");
             
+            if (cJSON_IsNumber(id)) server_id = id->valueint;
             if (cJSON_IsNumber(time)) server_time = time->valueint;
             if (cJSON_IsString(word)) strncpy(server_word, word->valuestring, sizeof(server_word) - 1);
         }
@@ -141,12 +216,36 @@ void recuperar_servidor() {
                     strncpy(painter_colors[i], color_item->valuestring, 19);
                 }
             }
+
+            cJSON *sizes_array = cJSON_GetObjectItemCaseSensitive(painter, "size");
+            painter_sizes_count = cJSON_GetArraySize(sizes_array);
+            for (int i = 0; i < painter_sizes_count; i++) {
+                cJSON *size_item = cJSON_GetArrayItem(sizes_array, i);
+                if (cJSON_IsString(size_item)) {
+                    strncpy(painter_sizes[i], size_item->valuestring, 9);
+                }
+            }
         }
     }
 
     cJSON_Delete(root);
     printf("[SISTEMA] Recuerdos recuperados con éxito. Palabra: '%s', Tiempo restante: %ds, Jugadores: %d\n", 
             server_word, server_time, player_count);
+}
+
+// --- LOOP PARA GUARDAR EL ESTADO ACTUAL EN EL JSON CADA SEGUNDO --- 
+void* game_loop_timer(void* arg) {
+    while (gameStarted && server_time > 0) {
+        sleep(1);
+        server_time--;
+        
+        guardar_servidor(); 
+
+        if (server_time == 0) {
+            printf("[JUEGO] El tiempo se ha agotado para la palabra '%s'\n", server_word);
+        }
+    }
+    pthread_exit(NULL);
 }
 
 int main(int argc, char* argv[]) {
@@ -160,6 +259,13 @@ int main(int argc, char* argv[]) {
     if (argc > 1 && strcmp(argv[1], "ALIVE") == 0) {
         printf("[SISTEMA] Servidor iniciado en modo recuperación. Cargando estado...\n");
         recuperar_servidor();  
+
+        if (gameStarted) {
+            pthread_t game_thread;
+            pthread_create(&game_thread, NULL, game_loop_timer, NULL);
+            pthread_detach(game_thread);
+            printf("[SISTEMA] Temporizador del juego reactivado en %ds.\n", server_time);
+        }
     } else {
         printf("[SISTEMA] Servidor iniciado normalmente.\n");
     }

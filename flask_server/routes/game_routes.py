@@ -1,4 +1,5 @@
 from flask import Blueprint, render_template, request, jsonify, session, Response
+import socket
 from services.udp_client import send_draw_event
 from services.tcp_client import send_chat_message
 import json
@@ -47,20 +48,6 @@ def call_tcp_server(payload: dict) -> dict:
 TCP_HOST = "127.0.0.1"
 TCP_PORT = 15000
 
-def call_tcp_server(payload: dict) -> dict:
-    """Función auxiliar para comunicarse de forma síncrona con el servidor C"""
-    try:
-        tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        tcp_socket.connect((TCP_HOST, TCP_PORT))
-        tcp_socket.sendall(json.dumps(payload).encode("utf-8"))
-        
-        response = tcp_socket.recv(1048).decode("utf-8")
-        tcp_socket.close()
-        return json.loads(response)
-    except Exception as e:
-        print("[TCP SERVER ERROR]", e)
-        return {}
-
 @game_bp.route("/game/<room_id>")
 def game(room_id):
     player = session.get("player_name", "Invitado")
@@ -98,22 +85,13 @@ def draw():
         "size": data.get("size", 5)
     }
 
-    # 1. Mandar evento al servidor UDP en C
-    udp_ok = send_draw_event(
-        draw_event["room_id"],
-        draw_event["player"],
-        draw_event["startX"],
-        draw_event["startY"],
-        draw_event["endX"],
-        draw_event["endY"],
-        draw_event["color"],
-        draw_event["size"]
-    )
+    # 1. Mandar evento al servidor TCP en C para persistencia
+    tcp_resp = call_tcp_server(draw_event)
 
     # 2. Mandar evento a los navegadores conectados en la misma sala
     broadcast_to_room(room_id, draw_event)
 
-    return jsonify({"ok": True, "udp_ok": udp_ok})
+    return jsonify({"ok": True, "tcp_status": tcp_resp.get("status")})
 
 
 @game_bp.route("/clear", methods=["POST"])
@@ -132,10 +110,44 @@ def clear_canvas():
         "player": player
     }
 
+    # Notificar al servidor TCP para que limpie el JSON
+    call_tcp_server(clear_event)
+
     broadcast_to_room(room_id, clear_event)
 
     return jsonify({"ok": True})
 
+@game_bp.route("/events/<room_id>")
+def events(room_id):
+    """Stream de eventos en tiempo real (SSE) para la sala."""
+    def stream():
+        q = queue.Queue()
+        if room_id not in room_clients:
+            room_clients[room_id] = []
+        room_clients[room_id].append(q)
+        
+        try:
+            while True:
+                event = q.get()
+                yield f"data: {json.dumps(event)}\n\n"
+        except GeneratorExit:
+            room_clients[room_id].remove(q)
+
+    return Response(stream(), mimetype="text/event-stream")
+
+@game_bp.route("/game/start", methods=["POST"])
+def start_game():
+    data = request.get_json() or {}
+    room_id = data.get("room_id")
+    player = session.get("player_name", "anonymous")
+    
+    # Llamamos al servidor C para que asigne palabra y dibujante
+    tcp_response = call_tcp_server({
+        "type": "START_ROUND",
+        "room_id": room_id,
+        "player": player
+    })
+    return jsonify(tcp_response)
 
 @game_bp.route("/guess", methods=["POST"])
 def guess():

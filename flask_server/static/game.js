@@ -15,15 +15,6 @@ let lastY = 0;
 let isDrawer = false; 
 let lastMsgId = 0;
 
-
-canvas.addEventListener("mousedown", (e) => {
-    // REGLA 2: Si no eres el dibujante, el mouse no hace nada
-    if (!isDrawer) return; 
-    
-    drawing = true;
-    [lastX, lastY] = getMousePos(e);
-});
-
 // Configuración del pincel
 ctx.lineJoin = "round";
 ctx.lineCap = "round";
@@ -60,6 +51,11 @@ function drawLine(startX, startY, endX, endY, color, size) {
 
 // Eventos de mouse
 canvas.addEventListener("mousedown", (e) => {
+    // Si no es mi turno de dibujar, no hago nada
+    if (!isDrawer) {
+        console.log("No eres el dibujante actual");
+        return;
+    }
     drawing = true;
     [lastX, lastY] = getMousePos(e);
 });

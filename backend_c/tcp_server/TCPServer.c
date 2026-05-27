@@ -2,11 +2,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <strings.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <time.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <cjson/cJSON.h>
+#include <openssl/evp.h>
+#include <openssl/sha.h>
+#include <openssl/bio.h>
+#include <openssl/buffer.h>
 
 #define TCP_PORT 15000
 #define HEARTBEAT_PORT 5001
@@ -18,13 +24,12 @@
     TCPServer.c oficial para PincelNet
 
     Funciones:
-    - Recibe mensajes TCP desde Flask.
-    - Procesa chat: MESSAGE.
+    - Recibe mensajes TCP (Chat, Dibujo, Juego).
+    - Procesa chat y adivinanzas: MESSAGE.
     - Procesa dibujo: UPDATE_CANVAS.
     - Procesa limpieza de canvas: CLEAR_CANVAS.
+    - Procesa lógica de juego: START_ROUND, GET_STATE.
     - Guarda estado del canvas en server_tcp.json.
-    - Recupera estado si es revivido por UDPserver.c.
-    - Manda heartbeat UDP al servidor de disponibilidad.
     - Atiende múltiples clientes usando pthread.
 */
 
@@ -39,10 +44,57 @@ typedef struct {
     int size;
 } DrawLine;
 
+// Estructura para el estado de juego por sala
+typedef struct {
+    char room_id[64];
+    char current_word[128];
+    char current_drawer[128];
+    char status[32]; // "waiting", "playing", "round_finished"
+    int word_length;
+    int is_guessed;
+    char last_sender[128];
+    char last_message[512];
+    int msg_id;
+} GameRoom;
+
+#define MAX_ROOMS 100
+const char* word_bank[] = {
+    "perro", "gato", "computadora", "servidor", "pincel",
+    "canvas", "manzana", "guitarra", "codigo", "internet"
+};
+#define WORD_BANK_SIZE 10
+
 DrawLine canvas_lines[MAX_LINES];
 int canvas_count = 0;
 
+GameRoom rooms[MAX_ROOMS];
+int room_count = 0;
+
 pthread_mutex_t state_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* =========================================================
+   Gestión de Salas de Juego
+   ========================================================= */
+GameRoom* get_or_create_room(const char* room_id) {
+    for (int i = 0; i < room_count; i++) {
+        if (strcmp(rooms[i].room_id, room_id) == 0) {
+            return &rooms[i];
+        }
+    }
+    if (room_count < MAX_ROOMS) {
+        strcpy(rooms[room_count].room_id, room_id);
+        strcpy(rooms[room_count].status, "waiting");
+        rooms[room_count].current_word[0] = '\0';
+        rooms[room_count].current_drawer[0] = '\0';
+        rooms[room_count].word_length = 0;
+        rooms[room_count].is_guessed = 0;
+        rooms[room_count].last_sender[0] = '\0';
+        rooms[room_count].last_message[0] = '\0';
+        rooms[room_count].msg_id = 0;
+        return &rooms[room_count++];
+    }
+    return NULL;
+}
 
 /* =========================================================
    Guardar estado del canvas en JSON
@@ -232,7 +284,7 @@ void* send_heartbeat(void* arg) {
 /* =========================================================
    Procesar mensaje de chat
    ========================================================= */
-void handle_message(cJSON *json) {
+void handle_message(int client_fd, cJSON *json) {
     cJSON *room_id = cJSON_GetObjectItemCaseSensitive(json, "room_id");
     cJSON *player = cJSON_GetObjectItemCaseSensitive(json, "player");
     cJSON *message = cJSON_GetObjectItemCaseSensitive(json, "message");
@@ -240,6 +292,8 @@ void handle_message(cJSON *json) {
     const char *r = cJSON_IsString(room_id) ? room_id->valuestring : "Desconocida";
     const char *p = cJSON_IsString(player) ? player->valuestring : "Anonimo";
     const char *m = cJSON_IsString(message) ? message->valuestring : "";
+
+    char response[1024] = {0};
 
     if (strcmp(m, "__CLEAR_CANVAS__") == 0) {
         pthread_mutex_lock(&state_mutex);
@@ -249,10 +303,43 @@ void handle_message(cJSON *json) {
         save_state();
 
         printf("[LIENZO] Canvas limpiado desde mensaje especial. Sala: %s | Jugador: %s\n", r, p);
+        send(client_fd, "{\"status\": \"ok\", \"info\": \"canvas_cleared\"}", 42, 0);
         return;
     }
 
     printf("[CHAT] [Sala %s] %s: %s\n", r, p, m);
+
+    pthread_mutex_lock(&state_mutex);
+    GameRoom *room = get_or_create_room(r);
+    if (room) {
+        strcpy(room->last_sender, p);
+        strcpy(room->last_message, m);
+        room->msg_id++;
+
+        // Lógica de juego: ¿Es el dibujante?
+        if (strcmp(room->current_drawer, p) == 0) {
+            snprintf(response, sizeof(response), "{\"status\": \"drawer_chat\"}");
+        }
+        // ¿Es una adivinanza correcta?
+        else if (strcmp(room->status, "playing") == 0 && strcasecmp(room->current_word, m) == 0) {
+            room->is_guessed = 1;
+            strcpy(room->status, "round_finished");
+            printf("⭐ [Sala %s] ¡%s ADIVINÓ LA PALABRA (%s)! ⭐\n", r, p, room->current_word);
+            snprintf(response, sizeof(response),
+                "{\"status\": \"correct\", \"player\": \"%s\", \"word\": \"%s\"}",
+                p, room->current_word);
+        }
+        else {
+            snprintf(response, sizeof(response), "{\"status\": \"incorrect\"}");
+        }
+    } else {
+        snprintf(response, sizeof(response), "{\"status\": \"error\", \"message\": \"room_not_found\"}");
+    }
+    pthread_mutex_unlock(&state_mutex);
+
+    if (strlen(response) > 0) {
+        send(client_fd, response, strlen(response), 0);
+    }
 }
 
 /* =========================================================
@@ -350,6 +437,51 @@ void handle_clear_canvas(cJSON *json) {
 }
 
 /* =========================================================
+   Procesar acciones de juego adicionales
+   ========================================================= */
+void handle_start_round(int client_fd, cJSON *json) {
+    cJSON *room_id = cJSON_GetObjectItemCaseSensitive(json, "room_id");
+    cJSON *player = cJSON_GetObjectItemCaseSensitive(json, "player");
+    char response[1024] = {0};
+
+    pthread_mutex_lock(&state_mutex);
+    GameRoom *room = get_or_create_room(cJSON_IsString(room_id) ? room_id->valuestring : "default");
+    if (room) {
+        int idx = rand() % WORD_BANK_SIZE;
+        strcpy(room->current_word, word_bank[idx]);
+        strncpy(room->current_drawer, cJSON_IsString(player) ? player->valuestring : "anonymous", 127);
+        strcpy(room->status, "playing");
+        room->word_length = strlen(room->current_word);
+        room->is_guessed = 0;
+
+        printf("[JUEGO] Sala %s: Turno de %s. Palabra: %s\n", room->room_id, room->current_drawer, room->current_word);
+        snprintf(response, sizeof(response),
+            "{\"status\": \"ok\", \"word\": \"%s\", \"drawer\": \"%s\"}",
+            room->current_word, room->current_drawer);
+    }
+    pthread_mutex_unlock(&state_mutex);
+    send(client_fd, response, strlen(response), 0);
+}
+
+void handle_get_state(int client_fd, cJSON *json) {
+    cJSON *room_id = cJSON_GetObjectItemCaseSensitive(json, "room_id");
+    char response[1024] = {0};
+
+    pthread_mutex_lock(&state_mutex);
+    GameRoom *room = get_or_create_room(cJSON_IsString(room_id) ? room_id->valuestring : "default");
+    if (room) {
+        snprintf(response, sizeof(response),
+            "{\"game_status\": \"%s\", \"drawer\": \"%s\", \"current_word\": \"%s\", \"word_length\": %d, \"is_guessed\": %d, \"last_sender\": \"%s\", \"last_message\": \"%s\", \"msg_id\": %d}",
+            room->status, room->current_drawer, room->current_word, room->word_length, room->is_guessed,
+            room->last_sender, room->last_message, room->msg_id);
+    } else {
+        snprintf(response, sizeof(response), "{\"status\": \"error\"}");
+    }
+    pthread_mutex_unlock(&state_mutex);
+    send(client_fd, response, strlen(response), 0);
+}
+
+/* =========================================================
    Hilo para atender a cada cliente TCP
    ========================================================= */
 void* handle_client(void* arg) {
@@ -376,16 +508,25 @@ void* handle_client(void* arg) {
 
         if (cJSON_IsString(type)) {
             if (strcmp(type->valuestring, "MESSAGE") == 0) {
-                handle_message(json);
+                handle_message(client_fd, json);
             }
             else if (strcmp(type->valuestring, "UPDATE_CANVAS") == 0) {
                 handle_canvas_update(json);
+                send(client_fd, "{\"status\": \"ok\"}", 16, 0);
             }
             else if (strcmp(type->valuestring, "CLEAR_CANVAS") == 0) {
                 handle_clear_canvas(json);
+                send(client_fd, "{\"status\": \"ok\"}", 16, 0);
+            }
+            else if (strcmp(type->valuestring, "START_ROUND") == 0) {
+                handle_start_round(client_fd, json);
+            }
+            else if (strcmp(type->valuestring, "GET_STATE") == 0) {
+                handle_get_state(client_fd, json);
             }
             else {
                 printf("[TCP] Tipo desconocido: %s\n", type->valuestring);
+                send(client_fd, "UNKNOWN TYPE\n", 13, 0);
             }
         } else {
             printf("[TCP] Mensaje sin campo type:\n%s\n", buffer);
@@ -393,12 +534,12 @@ void* handle_client(void* arg) {
 
         cJSON_Delete(json);
 
-        /*
-            Muy importante:
-            El UDPserver.c, cuando hace bridge UDP -> TCP, puede esperar respuesta.
-            Este ACK evita que el bridge se quede esperando hasta timeout.
-        */
-        send(client_fd, "OK\n", strlen("OK\n"), 0);
+        // Nota: Los handlers específicos ahora gestionan su propio envío de respuesta
+        // para permitir enviar objetos JSON complejos en lugar de un simple "OK".
+    } else {
+        // En caso de que se cierre la conexión sin datos o error de lectura
+        close(client_fd);
+        pthread_exit(NULL);
     }
 
     close(client_fd);
@@ -412,6 +553,8 @@ int main(int argc, char *argv[]) {
     int server_fd;
     struct sockaddr_in server_addr;
     int opt = 1;
+
+    srand(time(NULL)); // Semilla para palabras aleatorias
 
     if (argc > 1 && strcmp(argv[1], "ALIVE") == 0) {
         printf("[SISTEMA] Servidor TCP revivido por UDPserver. Recuperando estado...\n");

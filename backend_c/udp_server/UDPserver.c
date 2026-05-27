@@ -20,7 +20,7 @@ pid_t tcp_server_pid = -1;
 
 void revive_tcp_server() {
     printf("[HEARTBEAT] ¡Servidor TCP caído! Reviviendo servidor");
-    system("./server \"ALIVE\" &");
+    system("./tcp_server/server \"ALIVE\" &");
 }
 
 // Monitor de heartbeat: recibe señales de vida del servidor TCP

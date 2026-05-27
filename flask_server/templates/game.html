@@ -1,38 +1,109 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
-    <title>Juego</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PincelNet - Sala {{ room_id }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 
-<h1>Sala {{ room_id }}</h1>
+<div class="container">
+    <div class="game-header">
+        <div class="game-header-left">
+            <h2 style="margin: 0; color: var(--accent-color);">Sala: {{ room_id }}</h2>
+            <span style="color: var(--text-muted); font-size: 0.9rem;">Modo: Clasico Pinturillo</span>
+        </div>
+        <div class="game-header-right">
+            <span style="margin-right: 15px;">Jugador: <strong style="color: var(--accent-success);">{{ player }}</strong></span>
+            <a href="/lobby" class="btn-primary" style="padding: 8px 16px; background: #ff3b30; font-size: 0.9rem; text-decoration: none; border-radius: 6px;">Salir</a>
+        </div>
+    </div>
 
-<p>Jugador: {{ player }}</p>
+    <div class="round-panel">
+        <div class="round-item">Turno: <strong id="drawerName">{{ game_state.drawer }}</strong></div>
+        <div class="round-item">Tiempo: <strong id="timerValue">{{ game_state.time_remaining }}</strong>s</div>
+        <div class="round-item">Palabra: <strong id="wordDisplay">{{ game_state.word_hint }}</strong></div>
+    </div>
 
-<h2>Jugadores:</h2>
+    <div class="game-grid">
+        <div class="grid-col-players">
+            <h4 style="margin: 0 0 10px 0; color: var(--text-muted);">Jugadores</h4>
+            <div class="panel-players" id="playersContainer">
+                {% for p in players %}
+                    <div class="player-badge">{{ p }}</div>
+                {% endfor %}
+            </div>
 
-<ul>
-    {% for p in players %}
-        <li>{{ p }}</li>
-    {% endfor %}
-</ul>
+            <h4 style="margin: 18px 0 10px 0; color: var(--text-muted);">Puntajes</h4>
+            <div class="score-list" id="scoreList">
+                {% for name, score in game_state.scores.items() %}
+                    <div class="score-row">
+                        <span>{{ name }}</span>
+                        <strong>{{ score }} pts</strong>
+                    </div>
+                {% endfor %}
+            </div>
+        </div>
 
-<canvas
-    id="canvas"
-    width="500"
-    height="300"
-    style="border:1px solid black"
-></canvas>
+        <div class="grid-col-canvas">
+            <div class="canvas-wrapper">
+                <canvas id="canvas" width="600" height="400"></canvas>
+            </div>
 
-<h2>Respuesta / Chat</h2>
+            <div class="toolbar">
+                <div class="tool-item">
+                    <label style="font-size: 0.85rem; color: var(--text-muted); margin-right: 5px;">Color:</label>
+                    <input type="color" id="colorPicker" value="#1e1e2f" style="border: none; background: transparent; cursor: pointer; height: 30px; width: 35px;">
+                </div>
 
-<input id="messageInput" type="text" placeholder="Escribe tu respuesta">
-<button onclick="sendGuess()">Enviar</button>
+                <div class="tool-item" style="width: 150px;">
+                    <label style="font-size: 0.85rem; color: var(--text-muted); display: block; margin-bottom: 2px;">Grosor: <span id="brushSizeVal">5</span>px</label>
+                    <input type="range" id="brushSize" min="2" max="20" value="5" style="width: 100%;">
+                </div>
+
+                <div class="tool-item">
+                    <button id="clearBtn" class="btn-primary" style="padding: 6px 14px; background: #3d3f5d; font-size: 0.85rem; border-radius: 6px;">
+                        Borrar Todo
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid-col-chat">
+            <h4 style="margin: 0 0 10px 0; color: var(--text-muted);">Chat / Respuestas</h4>
+            <div class="panel-chat">
+                <div class="chat-messages" id="chatBox">
+                    <div class="chat-system">Bienvenido a la sala. Trata de adivinar el dibujo.</div>
+                </div>
+
+                <div class="chat-input-area">
+                    <div style="display: table-cell; width: 80%;">
+                        <input
+                            id="messageInput"
+                            type="text"
+                            class="input-custom"
+                            placeholder="Escribe tu respuesta aqui..."
+                            style="border: none; background: transparent; border-radius: 0; padding: 15px;"
+                            onkeypress="handleKeyPress(event)"
+                        >
+                    </div>
+                    <div style="display: table-cell; width: 20%; vertical-align: middle; padding-right: 10px;">
+                        <button onclick="sendGuess()" class="btn-primary" style="padding: 10px; font-size: 0.9rem;">
+                            Enviar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 
 <script>
     const ROOM_ID = "{{ room_id }}";
+    const PLAYER_NAME = "{{ player }}";
+    const INITIAL_GAME_STATE = {{ game_state|tojson }};
 </script>
-
 <script src="{{ url_for('static', filename='game.js') }}"></script>
 
 </body>

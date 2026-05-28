@@ -4,7 +4,6 @@ import socket
 FLASK_HOST = '0.0.0.0'
 FLASK_PORT = 5000
 
-# IP estando dentro de la up, puedes cambiarlo para hacer pruebas desde casa.
 SERVER_HOST = socket.gethostbyname(socket.gethostname())
 
 # Servidor TCP en Docker

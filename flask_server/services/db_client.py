@@ -19,6 +19,7 @@ class State(Enum):
     SAVE_GUESS = "save_guess"
     UPDATE_USER = "update_user"
     UPDATE_ROOM = "update_room"
+    GET_USERS = "get_users"
 
 
 class DBClient:
@@ -338,4 +339,32 @@ class DBClient:
             return []
         except Exception as e:
             print(f"[ERROR DB] Error al recibir/procesar las salas: {e}")
+            return []
+
+    def get_users_in_room(self, room_id):
+        # 1. Contenido con el ID de la sala para filtrar en el servidor
+        content = {"room_id": str(room_id)}
+        
+        # 2. Empaquetamos la petición cifrada
+        data = {
+            "headers": {
+                "ip":    self.my_host,
+                "hmac":  self._make_hmac(self.my_host),
+                "state": State.GET_USERS.value,
+            },
+            "content": self._encrypt_content(content)
+        }
+        
+        self._mail(data)
+        
+        try:
+            self.server.settimeout(2.0)
+            package, address = self.server.recvfrom(4096)
+            self.server.settimeout(None)
+            
+            respuesta = json.loads(package.decode("utf-8"))
+            return respuesta.get("users", [])
+            
+        except Exception as e:
+            print(f"[ERROR DB] Error al obtener usuarios de la sala: {e}")
             return []

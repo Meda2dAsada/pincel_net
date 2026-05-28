@@ -312,6 +312,169 @@ canvas {
     color: var(--accent-success);
 }
 
+.rooms-section {
+    margin-top: 40px;
+    background: var(--bg-main);
+    padding: 20px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+}
+
+.rooms-section h3 {
+    margin-top: 0;
+    margin-bottom: 16px;
+    text-align: left;
+    color: var(--accent-success);
+    font-size: 1.2rem;
+    font-weight: 600;
+}
+
+.room-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.room-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 14px 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    transition: all 0.2s ease;
+}
+
+/* Nombre de la sala */
+.room-item span:first-child {
+    color: var(--accent-color);
+    font-weight: bold;
+    font-size: 1rem;
+    word-break: break-word;
+    flex: 1;
+    min-width: 120px;
+}
+
+/* Botón Unirse dentro de cada sala */
+.room-item .btn-primary {
+    padding: 8px 16px;
+    font-size: 0.85rem;
+    text-decoration: none;
+    display: inline-block;
+    width: auto;
+    min-width: 80px;
+    text-align: center;
+    background: linear-gradient(45deg, var(--accent-color), #b02bb0);
+    border-radius: 6px;
+    transition: transform 0.2s, opacity 0.2s;
+}
+
+.room-item .btn-primary:active {
+    transform: scale(0.95);
+}
+
+/* Mensaje cuando no hay salas */
+.room-list .room-item:only-child {
+    justify-content: center;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    background: var(--bg-main);
+    border: 1px dashed var(--border-color);
+}
+
+.room-list .room-item:only-child span {
+    color: var(--text-muted);
+    font-weight: normal;
+}
+
+/* Hover solo para dispositivos con mouse */
+@media (hover: hover) {
+    .room-item:hover {
+        transform: translateX(4px);
+        border-color: var(--accent-color);
+        background: rgba(39, 41, 61, 0.8);
+    }
+    
+    .room-item .btn-primary:hover {
+        transform: translateY(-2px);
+        opacity: 0.9;
+    }
+}
+
+/* === MEDIA QUERY PARA MÓVIL (menos de 480px) === */
+@media (max-width: 480px) {
+    .rooms-section {
+        padding: 16px;
+        margin-top: 30px;
+    }
+    
+    .rooms-section h3 {
+        font-size: 1.1rem;
+        margin-bottom: 12px;
+    }
+    
+    .room-item {
+        flex-direction: column;
+        align-items: stretch;
+        padding: 12px;
+        gap: 10px;
+    }
+    
+    /* Nombre de la sala en móvil */
+    .room-item span:first-child {
+        text-align: center;
+        padding: 4px 0;
+        font-size: 1rem;
+    }
+    
+    /* Botón Unirse en móvil - ocupa todo el ancho */
+    .room-item .btn-primary {
+        width: 100%;
+        padding: 12px 16px;
+        font-size: 0.9rem;
+        text-align: center;
+    }
+    
+    /* Mensaje de "no hay salas" en móvil */
+    .room-list .room-item:only-child {
+        text-align: center;
+        padding: 16px;
+    }
+}
+
+/* === AJUSTE PARA TABLET (481px - 768px) === */
+@media (min-width: 481px) and (max-width: 768px) {
+    .room-item {
+        padding: 12px 16px;
+    }
+    
+    .room-item span:first-child {
+        font-size: 0.95rem;
+    }
+    
+    .room-item .btn-primary {
+        padding: 8px 14px;
+        font-size: 0.85rem;
+    }
+}
+
+/* === MEJORAS DE ACCESIBILIDAD === */
+.room-item .btn-primary:focus-visible {
+    outline: 2px solid var(--accent-success);
+    outline-offset: 2px;
+}
+
+.room-item:focus-within {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px rgba(225, 78, 202, 0.3);
+}
+
 /* === MEDIA QUERIES PARA TABLETS Y ESCRITORIO === */
 @media (min-width: 768px) {
     .game-grid {

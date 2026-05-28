@@ -45,44 +45,25 @@ def call_tcp_server(payload: dict) -> dict:
         print("[TCP SERVER ERROR]", e)
         return {}
 
-@game_bp.route("/lobby", methods=["GET", "POST"])
-def lobby():
+@game_bp.route("/game/<room_id>", methods=["GET", "POST"])
+def game(room_id):
     if request.method == "POST":
         player_name = request.form.get("player_name")
-        room_id = request.form.get("room_id")
-        
-        if not player_name or not room_id:
-            return render_template("lobby.html", error="Faltan datos")
-
-        session["player_name"] = player_name
-
-        # Notificar al servidor TCP en C para que registre en la DB
-        # Enviamos un comando especial REGISTER_LOBBY
-        call_tcp_server({
-            "type": "REGISTER_LOBBY",
-            "player": player_name,
-            "room_id": room_id
-        })
-
-        return redirect(url_for("game_bp.game", room_id=room_id))
-
-    # Al entrar al lobby, pedimos las salas al servidor C
-    resp = call_tcp_server({"type": "GET_ROOMS"})
-    rooms_list = resp.get("rooms", [])
-    return render_template("lobby.html", rooms=rooms_list)
-
-@game_bp.route("/game/<room_id>")
-def game(room_id):
-    player = session.get("player_name", "Invitado")
-
-    # Por ahora lista simple. Después puede venir desde BD o servidor C.
-    players = [player]
+        if player_name:
+            session["player_name"] = player_name  # Lo guardamos en sesión para persistencia
+    else:
+        # 2. Si solo está entrando a la página (GET), lo buscamos en la sesión
+        player_name = session.get("player_name")
+    
+    # Si no se encontró el nombre en ningún lado, redirigimos al lobby
+    if not player_name:
+        return redirect(url_for("lobby.lobby"))
 
     return render_template(
         "game.html",
         room_id=room_id,
-        player=player,
-        players=players
+        player=player_name,
+        players=[player_name]
     )
 
 
@@ -191,7 +172,7 @@ def guess():
     # Si la lógica centralizada en C dice que es correcto, se procede a guardar el log en la base de datos
     if tcp_response.get("status") == "correct":
         try:
-            from db_client import DBClient
+            from services.db_client import DBClient
             db = DBClient(my_port=0)
             db.save_guess(user_id=player, game_id=room_id, guess=message, is_correct=True)
             print(f"[BD INTEGRACIÓN] Puntos guardados para {player}")

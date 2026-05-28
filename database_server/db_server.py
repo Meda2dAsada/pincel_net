@@ -96,6 +96,7 @@ class State(Enum):
     UPDATE_USER = "update_user" 
     UPDATE_ROOM = "update_room"
     GET_ROOMS   = "get_rooms"
+    GET_USERS   = "get_users"
 
 
 STATE = State.IDLE
@@ -451,6 +452,39 @@ def get_rooms(address: tuple):
     finally:
         session.close()
 
+def get_users(content: dict):
+    # Usamos la variable global para responder al cliente correcto
+    global CLIENT_ADRESS
+    
+    session = get_session()
+    try:
+        room_id = str(content.get("room_id", "")).strip()
+        enc_room_id = db_encrypt(room_id)
+
+        # Buscamos los usuarios vinculados a esa sala en la BD
+        users = session.query(User).filter(User.room_id == enc_room_id).all()
+        active_users = []
+
+        for u in users:
+            try:
+                # Desencriptamos el nombre para que Flask pueda procesarlo
+                dec_user = db_decrypt(u.username)
+                active_users.append(dec_user)
+            except:
+                continue
+
+        response = {
+            "headers": {"ip": MY_HOST, "hmac": make_hmac(MY_HOST), "state": "USERS_LIST"},
+            "users": active_users,
+            "status": 200
+        }
+        server.sendto(json.dumps(response).encode("utf-8"), CLIENT_ADRESS)
+        
+    except Exception as e:
+        print(f"[DB ERROR] get_users: {e}")
+    finally:
+        session.close()
+
 # ──────────────────────────────────────────────
 # Main loop
 # ──────────────────────────────────────────────
@@ -495,9 +529,10 @@ if __name__ == "__main__":
                     case State.SAVE_ROOM: save_room(content)
                     case State.UPDATE_ROOM: update_room(content)
                     case State.GET_ROOMS: get_rooms(CLIENT_ADRESS)         
+                    case State.GET_USERS: get_users(content)
                     case _:
                         print(f"[WARNING] Estado no reconocido: {STATE_VAL}")
 
         except Exception as e:
-            print(f"\n❌ [ERROR FATAL EN BUCLE] No se pudo procesar el paquete.")
+            print(f"\n [ERROR FATAL EN BUCLE] No se pudo procesar el paquete.")
             traceback.print_exc()

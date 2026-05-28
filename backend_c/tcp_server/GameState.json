@@ -1,0 +1,17 @@
+{
+    "gameStarted": true,
+    "config": {
+        "server": {
+            "id": 123456,
+            "time": 1779991093,
+            "word": "perro"
+        },
+        "players": {
+            "count": 2,
+            "names": ["anonymous", "Yaya"],
+            "ids": [0, 1],
+            "points": [0, 0],
+            "answerCorrectly": [false, false]
+        }
+    }
+}

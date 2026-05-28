@@ -12,7 +12,7 @@
     <div class="lobby-title">PincelNet 🎨</div>
     <p style="color: var(--text-muted); margin-bottom: 30px;">Proyecto Distribuido - Pinturillo</p>
 
-    <form method="POST">
+    <form method="POST" id="lobby-form">
         <div class="form-group">
             <label for="player_name">Nickname del Jugador</label>
             <input 
@@ -48,7 +48,15 @@
             {% for room in rooms %}
                 <li class="room-item" style="display: flex; justify-content: space-between; align-items: center; padding: 10px; background: #2a2c41; margin-bottom: 5px; border-radius: 4px;">
                     <span style="color: var(--accent-color); font-weight: bold;">{{ room }}</span>
-                    <a href="{{ url_for('game_bp.game', room_id=room) }}" class="btn-primary" style="padding: 4px 10px; font-size: 0.8rem; text-decoration: none;">Unirse</a>
+                    
+                    <button 
+                        type="button" 
+                        class="btn-primary" 
+                        style="padding: 4px 10px; font-size: 0.8rem; border: none; cursor: pointer;"
+                        onclick="enviarFormularioASala('{{ url_for('game_bp.game', room_id=room) }}', '{{ room }}')"
+                    >
+                        Unirse
+                    </button>
                 </li>
             {% else %}
                 <li class="room-item" style="color: var(--text-muted); font-size: 0.9rem;">
@@ -58,6 +66,30 @@
         </ul>
     </div>
 </div>
+
+<script>
+function enviarFormularioASala(urlDestino, roomId) {
+    const playerNameInput = document.getElementById('player_name');
+    const roomIdInput = document.getElementById('room_id');
+    const form = document.getElementById('lobby-form');
+
+    // Validar si el usuario escribió su nombre. Si está vacío, le pide que lo rellene.
+    if (!playerNameInput.value.trim()) {
+        playerNameInput.reportValidity(); 
+        return;
+    }
+
+    // Colocamos el nombre de la sala seleccionada en el input de arriba 
+    // para que el atributo 'required' no bloquee el envío.
+    roomIdInput.value = roomId;
+
+    // Cambiamos dinámicamente la dirección a donde se enviará el formulario
+    form.action = urlDestino;
+
+    // Enviamos el formulario por método POST hacia la ruta del juego
+    form.submit();
+}
+</script>
 
 </body>
 </html>

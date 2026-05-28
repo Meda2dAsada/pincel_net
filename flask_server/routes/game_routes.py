@@ -72,7 +72,7 @@ def draw():
     data = request.get_json() or {}
 
     room_id = data.get("room_id")
-    player = data.get("player", session.get("player_name", "anonymous"))
+    player = data.get("player", session.get("player_name"))
 
     if not room_id:
         return jsonify({"ok": False, "error": "room_id requerido"}), 400
@@ -103,7 +103,7 @@ def clear_canvas():
     data = request.get_json() or {}
 
     room_id = data.get("room_id")
-    player = data.get("player", session.get("player_name", "anonymous"))
+    player = data.get("player", session.get("player_name"))
 
     if not room_id:
         return jsonify({"ok": False, "error": "room_id requerido"}), 400
@@ -143,7 +143,7 @@ def events(room_id):
 def start_game():
     data = request.get_json() or {}
     room_id = data.get("room_id")
-    player = session.get("player_name", "anonymous")
+    player = session.get("player_name")
     
     # Llamamos al servidor C para que asigne palabra y dibujante
     tcp_response = call_tcp_server({
@@ -159,7 +159,7 @@ def guess():
 
     room_id = data.get("room_id")
     message = data.get("message").strip()
-    player = session.get("player_name", "anonymous")
+    player = session.get("player_name")
 
     # Enviamos el intento al servidor C para su validación formal
     tcp_response = call_tcp_server({

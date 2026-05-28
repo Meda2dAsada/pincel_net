@@ -25,66 +25,71 @@ brushSize.addEventListener("input", (e) => {
 });
 
 // Obtener coordenadas relativas al canvas
-// ──────────────────────────────────────────────
-// OBTENER COORDENADAS (Unificado para Mouse y Touch)
-// ──────────────────────────────────────────────
-function getPos(e) {
-    const rect = canvas.getBoundingClientRect();
-    // Detectamos si es un evento táctil (dedo) o un evento de mouse
-    const clientX = e.touches && e.touches.length > 0 ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches && e.touches.length > 0 ? e.touches[0].clientY : e.clientY;
-    
+function getMousePos(e) {
+        const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width  / rect.width;
+    const scaleY = canvas.height / rect.height;
+
+    // Si es evento táctil, usa el primer dedo; si no, usa el mouse
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
     return [
-        Math.floor(clientX - rect.left),
-        Math.floor(clientY - rect.top)
+        Math.floor((clientX - rect.left) * scaleX),
+        Math.floor((clientY - rect.top)  * scaleY)
     ];
 }
 
-// ──────────────────────────────────────────────
-// EVENTOS DE DIBUJO (Touch y Mouse)
-// ──────────────────────────────────────────────
-function startDrawing(e) {
-    if (!isDrawer) return; // Si no es dibujante, no hace nada
-    
-    // Evitar que la pantalla haga scroll al tocar el canvas en el celular
-    if (e.type === "touchstart") {
-        e.preventDefault();
+// Dibujar línea local o remota
+function drawLine(startX, startY, endX, endY, color, size) {
+    ctx.beginPath();
+    ctx.moveTo(startX, startY);
+    ctx.lineTo(endX, endY);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = size;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.stroke();
+}
+
+// Eventos de mouse
+canvas.addEventListener("mousedown", (e) => {
+    // Si no es mi turno de dibujar, no hago nada
+    if (!isDrawer) {
+        console.log("No eres el dibujante actual");
+        return;
     }
-    
     drawing = true;
-    [lastX, lastY] = getPos(e);
-}
+    [lastX, lastY] = getMousePos(e);
+});
 
-function stopDrawing() {
+canvas.addEventListener("mouseup", () => {
     drawing = false;
-}
+});
 
-function draw(e) {
-    if (!drawing || !isDrawer) return;
-    
-    // Prevenir el scroll o recarga de la página al arrastrar el dedo
-    if (e.type === "touchmove") {
-        e.preventDefault();
-    }
+canvas.addEventListener("mouseout", () => {
+    drawing = false;
+});
 
-    const [currentX, currentY] = getPos(e);
+canvas.addEventListener("mousemove", (e) => {
+    if (!drawing) return;
+
+    const [currentX, currentY] = getMousePos(e);
     const color = colorPicker.value;
     const size = brushSize.value;
 
-    // Dibujo Local Inmediato
-    ctx.beginPath();
-    ctx.moveTo(lastX, lastY);
-    ctx.lineTo(currentX, currentY);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = size;
-    ctx.stroke();
+    // 1. Dibujar localmente para que el pintor no tenga latencia
+    drawLine(lastX, lastY, currentX, currentY, color, size);
 
-    // Enviar a Flask
+    // 2. Enviar trazo a Flask
     fetch("/draw", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+            "Content-Type": "application/json" 
+        },
         body: JSON.stringify({
             room_id: ROOM_ID,
+            player: PLAYER_NAME,
             startX: lastX,
             startY: lastY,
             endX: currentX,
@@ -92,23 +97,66 @@ function draw(e) {
             color: color,
             size: size
         })
+    }).catch((error) => {
+        console.log("Error enviando dibujo:", error);
     });
 
     [lastX, lastY] = [currentX, currentY];
-}
+});
 
-// Asignamos los eventos para computadora (Mouse)
-canvas.addEventListener("mousedown", startDrawing);
-canvas.addEventListener("mouseup", stopDrawing);
-canvas.addEventListener("mouseout", stopDrawing);
-canvas.addEventListener("mousemove", draw);
+// ── TOUCH ──────────────────────────────────────────
+canvas.addEventListener('touchstart', (e) => {           // ← faltaba (e)
+    e.preventDefault();                                   // ← evita scroll
+    if (!isDrawer) return;
+    drawing = true;
+    [lastX, lastY] = getMousePos(e);                     // ← ahora getMousePos recibe e
+}, { passive: false });                                   // ← necesario para preventDefault
 
-// Asignamos los eventos para celulares/tablets (Touch)
-// El { passive: false } es vital para que el e.preventDefault() funcione y no scrollee la página
-canvas.addEventListener("touchstart", startDrawing, { passive: false });
-canvas.addEventListener("touchend", stopDrawing);
-canvas.addEventListener("touchcancel", stopDrawing);
-canvas.addEventListener("touchmove", draw, { passive: false });
+canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();                                   // ← evita scroll mientras dibuja
+    if (!drawing) return;
+
+    const [currentX, currentY] = getMousePos(e);
+    const color = colorPicker.value;
+    const size = brushSize.value;
+
+    drawLine(lastX, lastY, currentX, currentY, color, size);
+
+    fetch("/draw", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            room_id: ROOM_ID,
+            player: PLAYER_NAME,
+            startX: lastX, startY: lastY,
+            endX: currentX, endY: currentY,
+            color, size
+        })
+    }).catch(err => console.log("Error enviando dibujo:", err));
+
+    [lastX, lastY] = [currentX, currentY];
+}, { passive: false });                                   // ← necesario para preventDefault
+
+canvas.addEventListener('touchend',   () => { drawing = false; });
+canvas.addEventListener('touchcancel',() => { drawing = false; });
+
+// Borrar canvas local
+clearBtn.addEventListener("click", () => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    fetch("/clear", {
+        method: "POST",
+        headers: { 
+            "Content-Type": "application/json" 
+        },
+        body: JSON.stringify({
+            room_id: ROOM_ID,
+            player: PLAYER_NAME
+        })
+    }).catch((error) => {
+        console.log("Error enviando clear:", error);
+    });
+});
 
 // Envío de Mensajes / Intentos de palabra
 // --- REEMPLAZA TU sendGuess ACTUAL CON ESTA ---

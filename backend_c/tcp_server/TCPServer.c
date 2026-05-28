@@ -244,11 +244,6 @@ void load_state() {
                 sizeof(canvas_lines[canvas_count].room_id) - 1
             );
 
-            strncpy(
-                canvas_lines[canvas_count].player,
-                cJSON_IsString(player) ? player->valuestring : "anonymous",
-                sizeof(canvas_lines[canvas_count].player) - 1
-            );
 
             canvas_lines[canvas_count].startX = cJSON_IsNumber(startX) ? startX->valueint : 0;
             canvas_lines[canvas_count].startY = cJSON_IsNumber(startY) ? startY->valueint : 0;
@@ -466,11 +461,6 @@ void handle_canvas_update(cJSON *json) {
         sizeof(canvas_lines[canvas_count].room_id) - 1
     );
 
-    strncpy(
-        canvas_lines[canvas_count].player,
-        cJSON_IsString(player) ? player->valuestring : "anonymous",
-        sizeof(canvas_lines[canvas_count].player) - 1
-    );
 
     canvas_lines[canvas_count].startX = cJSON_IsNumber(startX) ? startX->valueint : 0;
     canvas_lines[canvas_count].startY = cJSON_IsNumber(startY) ? startY->valueint : 0;
@@ -522,7 +512,7 @@ void handle_clear_canvas(cJSON *json) {
     cJSON *player = cJSON_GetObjectItemCaseSensitive(json, "player");
 
     const char *r = cJSON_IsString(room_id) ? room_id->valuestring : "unknown";
-    const char *p = cJSON_IsString(player) ? player->valuestring : "anonymous";
+    const char *p = cJSON_IsString(player) ? player->valuestring : "Invitado";
 
     pthread_mutex_lock(&state_mutex);
     canvas_count = 0;
@@ -544,7 +534,7 @@ void handle_start_round(int client_fd, cJSON *json) {
     pthread_mutex_lock(&state_mutex);
     GameRoom *room = get_or_create_room(cJSON_IsString(room_id) ? room_id->valuestring : "default");
     if (room) {
-        const char *p = cJSON_IsString(player) ? player->valuestring : "anonymous";
+        const char *p = cJSON_IsString(player) ? player->valuestring : "Invitado";
         add_points(room, p, 0); // Registramos al que inicia la ronda
 
         int idx = rand() % WORD_BANK_SIZE;

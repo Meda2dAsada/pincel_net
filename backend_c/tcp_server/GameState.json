@@ -3,15 +3,15 @@
     "config": {
         "server": {
             "id": 123456,
-            "time": 1779991093,
-            "word": "perro"
+            "time": 1779994436,
+            "word": "manzana"
         },
         "players": {
             "count": 2,
-            "names": ["anonymous", "Yaya"],
+            "names": ["Haha", "nmms"],
             "ids": [0, 1],
-            "points": [0, 0],
-            "answerCorrectly": [false, false]
+            "points": [0, 10],
+            "answerCorrectly": [false, true]
         }
     }
 }

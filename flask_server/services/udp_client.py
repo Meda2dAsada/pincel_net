@@ -1,17 +1,16 @@
 import socket
 import json
+from config import UDP_HOST, UDP_PORT
 
-UDP_HOST = "localhost"
-UDP_PORT = 5002
-
-def send_draw_event(room_id, start_x, start_y, end_x, end_y, color, size):
+def send_draw_event(room_id, player, startX, startY, endX, endY, color, size):
     data = {
         "type": "UPDATE_CANVAS",
         "room_id": room_id,
-        "startX": start_x,
-        "startY": start_y,
-        "endX": end_x,
-        "endY": end_y,
+        "player": player,
+        "startX": startX,
+        "startY": startY,
+        "endX": endX,
+        "endY": endY,
         "color": color,
         "size": size
     }

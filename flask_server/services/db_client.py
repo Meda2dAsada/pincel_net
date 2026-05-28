@@ -109,9 +109,13 @@ class DBClient:
     def _mail(self, data: dict) -> int:
         package = json.dumps(data)
         try:
-            udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            size = udp_socket.sendto(package.encode("utf-8"), (self.db_host, self.db_port))
-            udp_socket.close()
+            # ❌ ELIMINA O COMENTA ESTAS LÍNEAS QUE CREAN UN SOCKET TEMPORAL:
+            # udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            # size = udp_socket.sendto(package.encode("utf-8"), (self.db_host, self.db_port))
+            # udp_socket.close()
+
+            #  SOLUCIÓN: Usar el socket persistente de la clase (self.server)
+            size = self.server.sendto(package.encode("utf-8"), (self.db_host, self.db_port))
             return size
         except Exception as e:
             print("[UDP ERROR]", e)

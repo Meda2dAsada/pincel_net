@@ -27,6 +27,7 @@
     </div>
 
     <div class="game-grid">
+        
         <div class="grid-col-players">
             <h4 style="margin: 0 0 10px 0; color: var(--text-muted);">Jugadores</h4>
             <div class="panel-players" id="playersContainer">
@@ -47,6 +48,16 @@
         </div>
 
         <div class="grid-col-canvas">
+            
+            <div id="game-header-status" style="text-align: center; margin-bottom: 15px; padding: 15px; background-color: #1e1e2f; border-radius: 8px; border: 1px solid var(--accent-color);">
+                <h3 id="word-display" style="color: #00ffcc; margin: 0 0 10px 0; font-family: monospace; font-size: 1.2rem; letter-spacing: 1px;">
+                    Esperando a que inicie el juego...
+                </h3>
+                <button id="btn-start" onclick="startGame()" style="padding: 10px 20px; background-color: #d11a7e; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; font-size: 1rem;">
+                    🎮 Iniciar Ronda
+                </button>
+            </div>
+
             <div class="canvas-wrapper">
                 <canvas id="canvas" width="600" height="400"></canvas>
             </div>

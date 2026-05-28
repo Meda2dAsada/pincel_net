@@ -85,6 +85,7 @@ class State(Enum):
     SAVE_GUESS = "save_guess"
     UPDATE_USER = "update_user" 
     UPDATE_ROOM = "update_room"
+    GET_GUESSES = "get_guesses"
 
 
 STATE = State.IDLE
@@ -209,11 +210,12 @@ def unpack(package: bytes, address: tuple) -> dict:
 
 
 def exchange_pk():
-    global CLIENT_PK
+    global CLIENT_PK, CLIENT_HOST, CLIENT_PORT   # <-- 1. Agrega HOST y PORT aquí
     package, address = server.recvfrom(4096)
+    CLIENT_HOST, CLIENT_PORT = address           # <-- 2. Guarda la dirección real de Flask
+    
     parsed  = json.loads(package.decode("utf-8"))
     headers = parsed["headers"]
-
     if not hmac_ok(headers["ip"], headers["hmac"]):
         print("[ERROR] Handshake HMAC inválido")
         return
@@ -325,6 +327,30 @@ def save_guess(content: dict):
     finally:
         session.close()
 
+def get_guesses(content: dict, address: tuple):
+    session = get_session()
+    try:
+        room_id = content.get("room_id")
+        # Buscamos la sala para obtener su ID numérico si room_id es el código
+        enc_room_code = db_encrypt(str(room_id))
+        room = Room.find_by_code(session, enc_room_code)
+        
+        if not room:
+            mail_to_udp(empty_data(404), address[0], address[1])
+            return
+
+        guesses = Guess.by_game(session, room.id)
+        # Formateamos los mensajes (ya están encriptados en la DB)
+        history = []
+        for g in guesses:
+            history.append({"player": g.user.username, "msg": g.guess})
+
+        response = {"headers": {"state": "HISTORY"}, "history": history, "status": 200}
+        mail_to_udp(response, address[0], address[1])
+    except Exception as e:
+        print(f"Error fetching history: {e}")
+    finally:
+        session.close()
 
 def update_user(content: dict):
     session = get_session()
@@ -387,32 +413,58 @@ def update_room(content: dict):
 # Main loop
 # ──────────────────────────────────────────────
 
+# ──────────────────────────────────────────────
+# Main loop
+# ──────────────────────────────────────────────
+
 if __name__ == "__main__":
     print(f"UDP server listening on {MY_HOST}:{MY_PORT}")
 
     exchange_pk()
 
     while True:
-        package, address = server.recvfrom(4096)
-        print(f"[UDP RECEIVED] From {address}")
+        try:
+            package, address = server.recvfrom(4096)
+            CLIENT_HOST, CLIENT_PORT = address
+            
+            # 1. Leemos el paquete crudo
+            parsed = json.loads(package.decode("utf-8"))
+            
+            # 2. ESCUDO: ¿Es un nuevo jugador saludando (Handshake)?
+            if "pk" in parsed:
+                print(f"[HANDSHAKE SECUNDARIO] Atendiendo a nuevo jugador desde {address}")
+                CLIENT_PK = public_key_from_pem(parsed["pk"])
+                data = {
+                    "headers": {"ip": MY_HOST, "hmac": make_hmac(MY_HOST)},
+                    "pk": public_key_to_pem(public_key),
+                }
+                server.sendto(json.dumps(data).encode("utf-8"), (CLIENT_HOST, CLIENT_PORT))
+                continue # Saltamos el resto y lo dejamos entrar a la sala
 
-        content = unpack(package, address)
-        headers, _ = decode_package(package)
+            # 3. Si no es saludo, es un mensaje de juego normal
+            content = unpack(package, address)
+            headers = parsed.get("headers", {})
 
-        if content.get("status") == 200:
-            STATE = State(headers.get("state", State.IDLE.value))
-            match STATE:
-                case State.IDLE:
-                    break
-                case State.SAVE_USER:
-                    save_user(content)
-                case State.UPDATE_USER:
-                    update_user(content)
-                case State.SAVE_ROOM:
-                    save_room(content)
-                case State.UPDATE_ROOM:
-                    update_room(content)
-                case State.SAVE_GUESS:
-                    save_guess(content)
-                case _:
-                    break
+            if content.get("status") == 200:
+                STATE = State(headers.get("state", State.IDLE.value))
+                match STATE:
+                    case State.IDLE:
+                        pass
+                    case State.SAVE_USER:
+                        save_user(content)
+                    case State.UPDATE_USER:
+                        update_user(content)
+                    case State.SAVE_ROOM:
+                        save_room(content)
+                    case State.UPDATE_ROOM:
+                        update_room(content)
+                    case State.SAVE_GUESS:
+                        save_guess(content)
+                    case State.GET_GUESSES:
+                        get_guesses(content, address)
+                    case _:
+                        pass
+                        
+        except Exception as e:
+            # Si a la BD le llega basura, escupe el error pero SIGUE VIVA
+            print(f"[🛡️ ESCUDO DB ACTIVADO] Error ignorado para no crashear: {e}")

@@ -62,7 +62,6 @@ Members:
 
 Responsibilities:
 - Development of the Flask server
-- Implementation of game logic
 - Management of rooms and player turns
 - Handling of scores and word validation
 - Communication with the C socket servers
@@ -82,6 +81,7 @@ Responsibilities:
 - Implementation of encrypted communication
 - Management of multiplayer synchronization
 - Efficient processing of client requests
+- Implementation of game logic
 
 ---
 

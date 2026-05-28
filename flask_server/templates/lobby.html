@@ -45,9 +45,16 @@
     <div class="rooms-section">
         <h3 style="margin-top: 0; text-align: left; color: var(--accent-success);">Salas Activas en el Servidor</h3>
         <ul class="room-list">
-            <li class="room-item" style="color: var(--text-muted); font-size: 0.9rem;">
-                No hay salas públicas. Crea una ingresando un código arriba.
-            </li>
+            {% for room in rooms %}
+                <li class="room-item" style="display: flex; justify-content: space-between; align-items: center; padding: 10px; background: #2a2c41; margin-bottom: 5px; border-radius: 4px;">
+                    <span style="color: var(--accent-color); font-weight: bold;">{{ room }}</span>
+                    <a href="{{ url_for('game_bp.game', room_id=room) }}" class="btn-primary" style="padding: 4px 10px; font-size: 0.8rem; text-decoration: none;">Unirse</a>
+                </li>
+            {% else %}
+                <li class="room-item" style="color: var(--text-muted); font-size: 0.9rem;">
+                    No hay salas públicas. Crea una ingresando un código arriba.
+                </li>
+            {% endfor %}
         </ul>
     </div>
 </div>

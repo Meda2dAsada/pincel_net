@@ -1,3 +1,4 @@
+import traceback
 import socket
 import json
 import hmac as hmac_lib
@@ -20,13 +21,14 @@ from models.user import User
 from models.room import Room
 from models.guess import Guess
 
-MY_HOST = "127.0.6.7"
-MY_PORT = 3306
+MY_HOST = "127.0.0.1"
+MY_PORT = 5003
 
-CLIENT_HOST = "127.0.6.6"
-CLIENT_PORT = 3306
+CLIENT_HOST = "127.0.0.1"
+CLIENT_PORT = 15000
+CLIENT_ADRESS = None
 
-UDP_HOST = "127.0.6.5"
+UDP_HOST = "127.0.0.1"
 UDP_PORT = 5002
 
 APP_KEY = b"Another day in paradise"
@@ -63,15 +65,23 @@ def db_decrypt(b64_data: str) -> str:
     """Desencripta un string en Base64 usando AES-128-CBC."""
     if not b64_data: 
         return b64_data
-    ciphertext = base64.b64decode(b64_data)
-    cipher = Cipher(algorithms.AES128(DB_AES_KEY), modes.CBC(DB_AES_IV), backend=default_backend())
-    decryptor = cipher.decryptor()
-    
-    padded_data = decryptor.update(ciphertext) + decryptor.finalize()
-    
-    unpadder = padding.PKCS7(128).unpadder()
-    data = unpadder.update(padded_data) + unpadder.finalize()
-    return data.decode('utf-8')
+    try:
+        ciphertext = base64.b64decode(b64_data)
+        cipher = Cipher(algorithms.AES128(DB_AES_KEY), modes.CBC(DB_AES_IV), backend=default_backend())
+        decryptor = cipher.decryptor()
+        
+        padded_data = decryptor.update(ciphertext) + decryptor.finalize()
+        
+        # CORRECCIÓN AQUÍ: sym_padding en lugar de padding
+        unpadder = sym_padding.PKCS7(128).unpadder()
+        data = unpadder.update(padded_data) + unpadder.finalize()
+        return data.decode('utf-8')
+    except ValueError:
+        # Si falla el padding (significa que el dato NO estaba encriptado en la BD)
+        return b64_data
+    except Exception:
+        # Cualquier otro error, devolvemos el dato original en lugar de crashear
+        return b64_data
 
 
 server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -85,7 +95,7 @@ class State(Enum):
     SAVE_GUESS = "save_guess"
     UPDATE_USER = "update_user" 
     UPDATE_ROOM = "update_room"
-    GET_GUESSES = "get_guesses"
+    GET_ROOMS   = "get_rooms"
 
 
 STATE = State.IDLE
@@ -166,7 +176,10 @@ def mail(data: dict) -> int:
     package = json.dumps(data)
     try:
         udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        size = udp_socket.sendto(package.encode("utf-8"), (CLIENT_HOST, CLIENT_PORT))
+        if CLIENT_ADRESS is not None:
+            size = udp_socket.sendto(package.encode("utf-8"), CLIENT_ADRESS)
+        else:
+            size = udp_socket.sendto(package.encode("utf-8"), (CLIENT_HOST, CLIENT_PORT))
         udp_socket.close()
         return size
     except Exception as e:
@@ -210,12 +223,11 @@ def unpack(package: bytes, address: tuple) -> dict:
 
 
 def exchange_pk():
-    global CLIENT_PK, CLIENT_HOST, CLIENT_PORT   # <-- 1. Agrega HOST y PORT aquí
+    global CLIENT_PK
     package, address = server.recvfrom(4096)
-    CLIENT_HOST, CLIENT_PORT = address           # <-- 2. Guarda la dirección real de Flask
-    
     parsed  = json.loads(package.decode("utf-8"))
     headers = parsed["headers"]
+
     if not hmac_ok(headers["ip"], headers["hmac"]):
         print("[ERROR] Handshake HMAC inválido")
         return
@@ -267,7 +279,11 @@ def save_room(content: dict):
     session = get_session()
     try:
         room_code = str(content.get("room_code", "")).strip()
-        status    = str(content.get("status", "waiting")).strip()
+        
+        # Leemos el status, pero si es "200" (código de red), lo forzamos a "waiting"
+        status = str(content.get("status", "waiting")).strip()
+        if status == "200":
+            status = "waiting"
 
         enc_room_code = db_encrypt(room_code)
         enc_status = db_encrypt(status)
@@ -277,12 +293,13 @@ def save_room(content: dict):
             existing.status = enc_status
             existing.save(session)
         else:
-            room = Room.create(session, room_code=enc_room_code, status=enc_status)
+            Room.create(session, room_code=enc_room_code, status=enc_status)
 
-        mail(empty_data(200))
+        mail(empty_data(200)) 
     except Exception as e:
+        print(f"[DB ERROR] save_room: {e}")
         session.rollback()
-        mail(empty_data(500))
+        mail(empty_data(500)) 
     finally:
         session.close()
 
@@ -327,30 +344,6 @@ def save_guess(content: dict):
     finally:
         session.close()
 
-def get_guesses(content: dict, address: tuple):
-    session = get_session()
-    try:
-        room_id = content.get("room_id")
-        # Buscamos la sala para obtener su ID numérico si room_id es el código
-        enc_room_code = db_encrypt(str(room_id))
-        room = Room.find_by_code(session, enc_room_code)
-        
-        if not room:
-            mail_to_udp(empty_data(404), address[0], address[1])
-            return
-
-        guesses = Guess.by_game(session, room.id)
-        # Formateamos los mensajes (ya están encriptados en la DB)
-        history = []
-        for g in guesses:
-            history.append({"player": g.user.username, "msg": g.guess})
-
-        response = {"headers": {"state": "HISTORY"}, "history": history, "status": 200}
-        mail_to_udp(response, address[0], address[1])
-    except Exception as e:
-        print(f"Error fetching history: {e}")
-    finally:
-        session.close()
 
 def update_user(content: dict):
     session = get_session()
@@ -409,9 +402,54 @@ def update_room(content: dict):
     finally:
         session.close()
 
-# ──────────────────────────────────────────────
-# Main loop
-# ──────────────────────────────────────────────
+def get_rooms(address: tuple):
+    # Usamos la variable global para asegurarnos de que la respuesta regrese al cliente correcto
+    global CLIENT_ADRESS
+    
+    session = get_session()
+    try:
+        rooms = session.query(Room).all()
+        active_rooms = []
+        
+        print(f"\n[DEBUG] --- ANALIZANDO SALAS EN LA BD ---")
+        for r in rooms:
+            try:
+                # 1. Desencriptamos
+                dec_code = db_decrypt(r.room_code)
+                dec_status = db_decrypt(r.status)
+                
+                # 2. Imprimimos exactamente qué está leyendo el servidor
+                print(f" -> Sala BD cruda: {r.room_code[:10]}... | Status crudo: {r.status[:10]}...")
+                print(f" -> Sala desencriptada: '{dec_code}' | Status desencriptado: '{dec_status}'")
+                
+                # 3. Limpiamos el texto (quitamos espacios extra y pasamos a minúsculas)
+                clean_status = str(dec_status).strip().lower()
+
+                if clean_status in ["waiting", "playing", "activo", "200"]:
+                    active_rooms.append(dec_code)
+                else:
+                    print(f"    [!] El status '{clean_status}' no es válido para mostrar en el lobby.")
+                    
+            except Exception as e:
+                print(f" [ERROR LEYENDO SALA] {e}")
+                continue
+        
+        print(f"[DEBUG] ---------------------------------")
+        print(f"[DB] Enviando {len(active_rooms)} salas activas al lobby {CLIENT_ADRESS}")
+        
+        response = {
+            "headers": {"ip": MY_HOST, "hmac": make_hmac(MY_HOST), "state": "ROOMS_LIST"},
+            "rooms": active_rooms,
+            "status": 200
+        }
+        
+        # Enviar respuesta al cliente (usamos CLIENT_ADRESS en vez de 'address' por si acaso)
+        server.sendto(json.dumps(response).encode("utf-8"), CLIENT_ADRESS)
+        
+    except Exception as e:
+        print(f"[DB ERROR] get_rooms: {e}")
+    finally:
+        session.close()
 
 # ──────────────────────────────────────────────
 # Main loop
@@ -420,51 +458,46 @@ def update_room(content: dict):
 if __name__ == "__main__":
     print(f"UDP server listening on {MY_HOST}:{MY_PORT}")
 
-    exchange_pk()
-
     while True:
         try:
             package, address = server.recvfrom(4096)
-            CLIENT_HOST, CLIENT_PORT = address
             
-            # 1. Leemos el paquete crudo
+            # 1. Actualizamos la variable global (como tú lo querías)
+            
+            CLIENT_ADRESS = address
+
+            # 2. Interceptamos el Handshake ANTES de intentar desencriptar
             parsed = json.loads(package.decode("utf-8"))
-            
-            # 2. ESCUDO: ¿Es un nuevo jugador saludando (Handshake)?
             if "pk" in parsed:
-                print(f"[HANDSHAKE SECUNDARIO] Atendiendo a nuevo jugador desde {address}")
+                print(f"[DEBUG] 🤝 Handshake de {CLIENT_ADRESS}. Respondiendo...")
+            
                 CLIENT_PK = public_key_from_pem(parsed["pk"])
+                
                 data = {
                     "headers": {"ip": MY_HOST, "hmac": make_hmac(MY_HOST)},
                     "pk": public_key_to_pem(public_key),
                 }
-                server.sendto(json.dumps(data).encode("utf-8"), (CLIENT_HOST, CLIENT_PORT))
-                continue # Saltamos el resto y lo dejamos entrar a la sala
+                mail(data) # Le responde a Flask usando la variable global
+                continue   # Saltamos el resto y volvemos a esperar la petición real
 
-            # 3. Si no es saludo, es un mensaje de juego normal
-            content = unpack(package, address)
-            headers = parsed.get("headers", {})
+            # 3. Si no es Handshake, procesamos normal
+            content = unpack(package, CLIENT_ADRESS)
+            headers, _ = decode_package(package)
 
-            if content.get("status") == 200:
-                STATE = State(headers.get("state", State.IDLE.value))
+            if str(content.get("status")) == "200":
+                STATE_VAL = headers.get("state", "idle")
+                
+                STATE = State(STATE_VAL)
                 match STATE:
-                    case State.IDLE:
-                        pass
-                    case State.SAVE_USER:
-                        save_user(content)
-                    case State.UPDATE_USER:
-                        update_user(content)
-                    case State.SAVE_ROOM:
-                        save_room(content)
-                    case State.UPDATE_ROOM:
-                        update_room(content)
-                    case State.SAVE_GUESS:
-                        save_guess(content)
-                    case State.GET_GUESSES:
-                        get_guesses(content, address)
+                    case State.IDLE: pass
+                    case State.SAVE_USER: save_user(content)
+                    case State.UPDATE_USER: update_user(content)
+                    case State.SAVE_ROOM: save_room(content)
+                    case State.UPDATE_ROOM: update_room(content)
+                    case State.GET_ROOMS: get_rooms(CLIENT_ADRESS)         
                     case _:
-                        pass
-                        
+                        print(f"[WARNING] Estado no reconocido: {STATE_VAL}")
+
         except Exception as e:
-            # Si a la BD le llega basura, escupe el error pero SIGUE VIVA
-            print(f"[🛡️ ESCUDO DB ACTIVADO] Error ignorado para no crashear: {e}")
+            print(f"\n❌ [ERROR FATAL EN BUCLE] No se pudo procesar el paquete.")
+            traceback.print_exc()

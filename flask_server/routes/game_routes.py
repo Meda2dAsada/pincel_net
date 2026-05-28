@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, jsonify, session, Response
+from flask import Blueprint, render_template, request, jsonify, session, Response, redirect, url_for
 import socket
 from services.udp_client import send_draw_event
 from services.tcp_client import send_chat_message
@@ -45,8 +45,31 @@ def call_tcp_server(payload: dict) -> dict:
         print("[TCP SERVER ERROR]", e)
         return {}
 
-TCP_HOST = "127.0.0.1"
-TCP_PORT = 15000
+@game_bp.route("/lobby", methods=["GET", "POST"])
+def lobby():
+    if request.method == "POST":
+        player_name = request.form.get("player_name")
+        room_id = request.form.get("room_id")
+        
+        if not player_name or not room_id:
+            return render_template("lobby.html", error="Faltan datos")
+
+        session["player_name"] = player_name
+
+        # Notificar al servidor TCP en C para que registre en la DB
+        # Enviamos un comando especial REGISTER_LOBBY
+        call_tcp_server({
+            "type": "REGISTER_LOBBY",
+            "player": player_name,
+            "room_id": room_id
+        })
+
+        return redirect(url_for("game_bp.game", room_id=room_id))
+
+    # Al entrar al lobby, pedimos las salas al servidor C
+    resp = call_tcp_server({"type": "GET_ROOMS"})
+    rooms_list = resp.get("rooms", [])
+    return render_template("lobby.html", rooms=rooms_list)
 
 @game_bp.route("/game/<room_id>")
 def game(room_id):

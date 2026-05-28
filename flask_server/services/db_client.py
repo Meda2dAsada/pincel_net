@@ -7,6 +7,10 @@ from cryptography.hazmat.primitives.asymmetric import rsa, padding, types
 from cryptography.hazmat.primitives import hashes, serialization
 from enum import Enum
 
+APP_KEY = b"Another day in paradise"
+
+def make_hmac(address: str) -> str:
+    return hmac_lib.new(APP_KEY, address.encode(), hashlib.sha256).hexdigest()
 
 class State(Enum):
     IDLE = "idle"
@@ -18,7 +22,7 @@ class State(Enum):
 
 
 class DBClient:
-    def __init__(self, my_host="127.0.6.6", my_port=3306, db_host="127.0.6.7", db_port=3306, app_key=b"Another day in paradise"):
+    def __init__(self, my_host="127.0.0.1", my_port=5002, db_host="127.0.0.1", db_port=5003, app_key=b"Another day in paradise"):
         self.my_host = my_host
         self.my_port = my_port
         self.db_host = db_host
@@ -297,3 +301,41 @@ class DBClient:
             print(f"[LOG] Room '{room_code}' Updated")
         else:
             print(f"[ERROR] Could not update room '{room_code}'")
+    
+    def get_rooms(self):
+        # 1. Contenido base a enviar
+        content = {"status": "200"}
+        
+        # 2. Empaquetamos usando la misma estructura que save_room y save_user
+        data = {
+            "headers": {
+                "ip":    self.my_host,
+                "hmac":  self._make_hmac(self.my_host),
+                "state": "get_rooms",
+            },
+            "content": self._encrypt_content(content)
+        }
+        
+        # 3. Enviamos el paquete usando el método interno que ya maneja tu socket (self.server)
+        self._mail(data)
+        
+        # 4. Escuchamos la respuesta de vuelta
+        try:
+            self.server.settimeout(2.0)
+            package, address = self.server.recvfrom(4096)
+            self.server.settimeout(None)  # Restauramos el socket a su estado normal
+            
+            # Como programamos db_server.py para que devuelva la lista en texto plano,
+            # lo leemos directamente en lugar de usar _unpack()
+            respuesta = json.loads(package.decode("utf-8"))
+            
+            if "rooms" in respuesta:
+                return respuesta["rooms"]
+            return []
+            
+        except socket.timeout:
+            print("[ERROR DB] Timeout esperando la lista de salas desde el servidor.")
+            return []
+        except Exception as e:
+            print(f"[ERROR DB] Error al recibir/procesar las salas: {e}")
+            return []

@@ -311,6 +311,63 @@ void* send_heartbeat(void* arg) {
     pthread_exit(NULL);
 }
 
+void save_game_state(GameRoom *room) {
+    FILE *fp = fopen("GameState.json", "w");
+    if (!fp) {
+        perror("No se pudo crear GameState.json");
+        return;
+    }
+
+    const char* game_started = (strcmp(room->status, "waiting") == 0) ? "false" : "true";
+
+    fprintf(fp, "{\n");
+    fprintf(fp, "    \"gameStarted\": %s,\n", game_started);
+    fprintf(fp, "    \"config\": {\n");
+
+    fprintf(fp, "        \"server\": {\n");
+    fprintf(fp, "            \"id\": 123456,\n");
+    fprintf(fp, "            \"time\": %d,\n", (int)time(NULL));
+    fprintf(fp, "            \"word\": \"%s\"\n", room->current_word);
+    fprintf(fp, "        },\n");
+
+    fprintf(fp, "        \"players\": {\n");
+    fprintf(fp, "            \"count\": %d,\n", room->player_count);
+
+    fprintf(fp, "            \"names\": [");
+    for (int i = 0; i < room->player_count; i++) {
+        fprintf(fp, "\"%s\"%s", room->players[i].username, (i < room->player_count - 1) ? ", " : "");
+    }
+    fprintf(fp, "],\n");
+
+    fprintf(fp, "            \"ids\": [");
+    for (int i = 0; i < room->player_count; i++) {
+        fprintf(fp, "%d%s", i, (i < room->player_count - 1) ? ", " : "");
+    }
+    fprintf(fp, "],\n");
+
+    fprintf(fp, "            \"points\": [");
+    for (int i = 0; i < room->player_count; i++) {
+        fprintf(fp, "%d%s", room->players[i].score, (i < room->player_count - 1) ? ", " : "");
+    }
+    fprintf(fp, "],\n");
+
+    fprintf(fp, "            \"answerCorrectly\": [");
+    for (int i = 0; i < room->player_count; i++) {
+        int is_correct = (strcmp(room->status, "round_finished") == 0 &&
+                          room->is_guessed == 1 &&
+                          strcmp(room->last_sender, room->players[i].username) == 0);
+        fprintf(fp, "%s%s", is_correct ? "true" : "false", (i < room->player_count - 1) ? ", " : "");
+    }
+    fprintf(fp, "]\n");
+
+    fprintf(fp, "        }\n");
+    fprintf(fp, "    }\n");
+    fprintf(fp, "}\n");
+
+    fclose(fp);
+    printf("[SNAPSHOT] GameState.json actualizado.\n");
+}
+
 /* =========================================================
    Procesar mensaje de chat
    ========================================================= */
@@ -353,15 +410,21 @@ void handle_message(int client_fd, cJSON *json) {
             snprintf(response, sizeof(response), "{\"status\": \"drawer_chat\"}");
         }
         // ¿Es una adivinanza correcta?
+        // ¿Es una adivinanza correcta?
         else if (strcmp(room->status, "playing") == 0 && strcasecmp(room->current_word, m) == 0) {
             room->is_guessed = 1;
             strcpy(room->status, "round_finished");
+
             // ¡PREMIO! Sumamos 10 puntos al jugador
             add_points(room, p, 10);
             printf("⭐ [Sala %s] ¡%s ADIVINÓ LA PALABRA (%s)! ⭐\n", r, p, room->current_word);
+
             snprintf(response, sizeof(response),
                 "{\"status\": \"correct\", \"player\": \"%s\", \"word\": \"%s\"}",
                 p, room->current_word);
+
+            // ---> AÑADIMOS ESTO AQUÍ <---
+            save_game_state(room);
         }
         else {
             snprintf(response, sizeof(response), "{\"status\": \"incorrect\"}");
@@ -495,6 +558,9 @@ void handle_start_round(int client_fd, cJSON *json) {
         snprintf(response, sizeof(response),
             "{\"status\": \"ok\", \"word\": \"%s\", \"drawer\": \"%s\"}",
             room->current_word, room->current_drawer);
+
+        // ---> AÑADIMOS ESTO AQUÍ <---
+        save_game_state(room);
     }
     pthread_mutex_unlock(&state_mutex);
     send(client_fd, response, strlen(response), 0);

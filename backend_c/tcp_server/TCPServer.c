@@ -405,21 +405,42 @@ void handle_message(int client_fd, cJSON *json) {
             snprintf(response, sizeof(response), "{\"status\": \"drawer_chat\"}");
         }
         // ¿Es una adivinanza correcta?
-        // ¿Es una adivinanza correcta?
         else if (strcmp(room->status, "playing") == 0 && strcasecmp(room->current_word, m) == 0) {
-            room->is_guessed = 1;
-            strcpy(room->status, "round_finished");
-
-            // ¡PREMIO! Sumamos 10 puntos al jugador
+            // 1. Registrar acierto y premiar
             add_points(room, p, 10);
             printf("⭐ [Sala %s] ¡%s ADIVINÓ LA PALABRA (%s)! ⭐\n", r, p, room->current_word);
 
+            // 2. Lógica de Cambio Automático de Turno
+            int current_drawer_idx = -1;
+            for (int i = 0; i < room->player_count; i++) {
+                if (strcmp(room->players[i].username, room->current_drawer) == 0) {
+                    current_drawer_idx = i;
+                    break;
+                }
+            }
+
+            // Seleccionar nueva palabra
+            int next_w_idx = rand() % WORD_BANK_SIZE;
+            strcpy(room->current_word, word_bank[next_w_idx]);
+            room->word_length = strlen(room->current_word);
+
+            // Rotar al siguiente dibujante
+            if (room->player_count > 0) {
+                int next_d_idx = (current_drawer_idx + 1) % room->player_count;
+                strncpy(room->current_drawer, room->players[next_d_idx].username, 127);
+            }
+
+            // Limpiar lienzo para la nueva palabra y resetear banderas
+            canvas_count = 0;
+            room->is_guessed = 1; // Se mantiene en 1 para que el poll detecte el acierto del mensaje anterior
+            strcpy(room->status, "playing"); // La sala sigue activa con el nuevo turno
+
             snprintf(response, sizeof(response),
                 "{\"status\": \"correct\", \"player\": \"%s\", \"word\": \"%s\"}",
-                p, room->current_word);
+                p, m);
 
-            // ---> AÑADIMOS ESTO AQUÍ <---
             save_game_state(room);
+            save_state();
         }
         else {
             snprintf(response, sizeof(response), "{\"status\": \"incorrect\"}");

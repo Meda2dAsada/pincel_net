@@ -503,7 +503,7 @@ if __name__ == "__main__":
             # 2. Interceptamos el Handshake ANTES de intentar desencriptar
             parsed = json.loads(package.decode("utf-8"))
             if "pk" in parsed:
-                print(f"[DEBUG] 🤝 Handshake de {CLIENT_ADRESS}. Respondiendo...")
+                print(f"[DEBUG]  Handshake de {CLIENT_ADRESS}. Respondiendo...")
             
                 CLIENT_PK = public_key_from_pem(parsed["pk"])
                 

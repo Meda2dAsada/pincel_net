@@ -313,19 +313,20 @@ setInterval(async () => {
             if(btn) btn.style.display = "block";
         }
 
-        // REGLA 3: SINCRONIZACIÓN DE CHAT PARA TODOS
-       // REGLA 3: SINCRONIZACIÓN DE CHAT PARA TODOS
         if (state.msg_id > lastMsgId) {
+            const isMe = (state.last_sender === PLAYER_NAME);
             lastMsgId = state.msg_id;
             
-            // Le quitamos el "window." para que lea la variable const correctamente
-            if (state.last_sender !== "" && state.last_sender !== PLAYER_NAME) {
+            // Solo agregamos la burbuja si no es nuestro (nosotros ya lo agregamos localmente al escribir)
+            if (state.last_sender !== "" && !isMe) {
                 appendMessage(state.last_sender, state.last_message);
-                
-                // Si el mensaje ajeno fue la respuesta correcta, celebramos
-                if (state.game_status === "round_finished" && state.is_guessed === 1) {
-                     appendSystemMessage(`🌟 ¡${state.last_sender} ADIVINÓ LA PALABRA! 🌟`);
-                }
+            }
+
+            // CELEBRACIÓN: Si el estado del servidor indica que alguien adivinó, 
+            // mostramos el mensaje del sistema a TODOS, incluido el ganador.
+            if (state.is_guessed === 1) {
+                 const winnerText = isMe ? "¡ADIVINASTE LA PALABRA!" : `${state.last_sender} ADIVINÓ LA PALABRA`;
+                 appendSystemMessage(`🌟 ¡${winnerText}! 🌟`);
             }
         }
 // REGLA 4: RENDERIZAR LA TABLA DE PUNTOS
